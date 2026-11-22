@@ -50,6 +50,10 @@ The stuck signal for a kind is `evidence.retryCounts["vacuous-red:<kind>"] >= 1`
 
 The warning text lives in one string used by the CLI and quoted in the skills, so a skill-text test can assert the two agree. The factory skills tell the session to stop, explain the options, recommend `red reuse` first and a waiver only after the system is stuck, and run the waiver with the flag only after the human acknowledges.
 
+### Exception files are run-state
+
+A new untracked `.factory/exceptions/red/<id>.json` would otherwise make `resolveGitBinding` report a dirty worktree and block the green record and `complete`, the same problem `.factory/approvals/` already solves. `.factory/exceptions/` joins the run-state prefixes in `verification-evidence.mjs`, and the factory does not gitignore it, so the record can be committed with the work.
+
 ### Other gates and the run session
 
 The commands never edit the rejected attempt, never touch the work item's `taskType`, and never write to `evidence.reds` or `evidence.verification`. They do not open or edit run sessions, so a sticky `vacuous-red` still needs the human's `--new-run`. In `orchestrate.stageForState`, a `code` attempt in `implementing` whose every required kind has a CLI red or a valid exception is asked to proceed to `verifying` instead of being asked for a red.

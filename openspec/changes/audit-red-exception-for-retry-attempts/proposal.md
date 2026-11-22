@@ -30,6 +30,7 @@ Out of scope:
 ### Modified Capabilities
 - `guided-build`: The `verifying` gate, completion, and the next-step message for a `code` attempt accept a valid red exception for a required test kind in place of a stored CLI red.
 - `factory-event-log`: Recording a red exception appends one control-plane event.
+- `verification-evidence`: Uncommitted files under `.factory/exceptions/` count as run-state like `.factory/approvals/`, so recording an exception does not make the worktree dirty for source-revision binding.
 - `ide-adapters`: Shipped factory-build, factory-tdd, and factory-verify skill text describes the exception commands, the stuck-first warning, and that only the human acknowledges it.
 
 ## Impact
