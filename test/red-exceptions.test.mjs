@@ -759,3 +759,174 @@ test('waive before a stuck signal is refused with the warning unless acknowledge
     cleanup(dir);
   }
 });
+
+function setVerifier(dir) {
+  const configPath = path.join(dir, '.factory/config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.governance.policyVersion = 2;
+  config.governance.principalVerifier = {
+    provider: 'local',
+    timeoutMs: 5000,
+    argv: [
+      process.execPath,
+      '-e',
+      "if (process.env.FACTORY_PRINCIPAL_SUBJECT !== 'human-1') process.exit(1); console.log(JSON.stringify({provider: process.env.FACTORY_PRINCIPAL_PROVIDER, subject: process.env.FACTORY_PRINCIPAL_SUBJECT, issuer: 'test'}))",
+    ],
+  };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+function noExceptionFiles(dir) {
+  const exceptionsPath = path.join(dir, '.factory/exceptions/red');
+  return !fs.existsSync(exceptionsPath) || fs.readdirSync(exceptionsPath).length === 0;
+}
+
+test('waive refuses an approver equal to the implementer and an empty approver', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    assert.equal(attempt.implementerId, 'engineer-1');
+    const before = fileBytes(attemptPath(dir, attempt.id));
+    assert.throws(
+      () => waiveRed(dir, waiveOptions(attempt, { approver: 'engineer-1' })),
+      /differ from the implementer/,
+    );
+    for (const approver of ['', '  ', undefined]) {
+      assert.throws(() => waiveRed(dir, waiveOptions(attempt, { approver })), /approver is required/);
+    }
+    assert.equal(fileBytes(attemptPath(dir, attempt.id)), before);
+    assert.equal(noExceptionFiles(dir), true);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses an approver equal to the implementer', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    assert.equal(target.implementerId, 'engineer-2');
+    await assertReuseRefused(
+      dir,
+      source,
+      target,
+      reuseOptions(source, target, { approver: 'engineer-2' }),
+      /differ from the implementer/,
+    );
+    await assertReuseRefused(
+      dir,
+      source,
+      target,
+      reuseOptions(source, target, { reason: ' ' }),
+      /reason is required/,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('policy version 2 requires a verified principal that equals the approver', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    setPolicyVersion(dir, 2);
+    assert.throws(() => waiveRed(dir, waiveOptions(attempt)), /principal/);
+    assert.equal(noExceptionFiles(dir), true);
+
+    setVerifier(dir);
+    assert.throws(() => waiveRed(dir, waiveOptions(attempt)), /principal/);
+    assert.throws(
+      () => waiveRed(dir, waiveOptions(attempt, {
+        approver: 'human-2',
+        principalProvider: 'local',
+        principalSubject: 'human-1',
+      })),
+      /approver must equal the verified principal/,
+    );
+    assert.throws(
+      () => waiveRed(dir, waiveOptions(attempt, {
+        approver: 'human-2',
+        principalProvider: 'local',
+        principalSubject: 'human-2',
+      })),
+      /principal/,
+    );
+    assert.equal(noExceptionFiles(dir), true);
+
+    const ok = waiveRed(dir, waiveOptions(attempt, {
+      principalProvider: 'local',
+      principalSubject: 'human-1',
+    }));
+    const record = JSON.parse(fs.readFileSync(ok.files[0], 'utf8'));
+    assert.equal(record.policyVersion, 2);
+    assert.equal(record.principal.subject, 'human-1');
+    assert.equal(record.principal.provider, 'local');
+    assert.equal(record.principal.issuer, 'test');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a second exception for one kind fails and leaves the first file unchanged', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const first = waiveRed(dir, waiveOptions(attempt));
+    const before = fileBytes(first.files[0]);
+    const attemptBefore = fileBytes(attemptPath(dir, attempt.id));
+    assert.throws(() => waiveRed(dir, waiveOptions(attempt)), /already has an exception for unit/);
+    assert.equal(fileBytes(first.files[0]), before);
+    assert.equal(fileBytes(attemptPath(dir, attempt.id)), attemptBefore);
+    assert.equal(fs.readdirSync(path.join(dir, '.factory/exceptions/red')).length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('an exception on one attempt does not satisfy a later attempt for the same task', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    waiveRed(dir, waiveOptions(attempt));
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    const later = getAttempt(dir, JSON.parse(started.out).id);
+    assert.equal(redSatisfaction(dir, later, 'unit'), 'missing');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function snapshotTree(root) {
+  const out = {};
+  if (!fs.existsSync(root)) return out;
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out[path.relative(root, full)] = fs.readFileSync(full, 'utf8');
+    }
+  };
+  walk(root);
+  return out;
+}
+
+test('exceptions do not edit run sessions, the work item class, or the rejected source', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const orchestrationBefore = snapshotTree(path.join(dir, '.factory/orchestration'));
+    const itemFile = path.join(dir, '.factory/work/items/demo--1.1.json');
+    const itemBefore = JSON.parse(fileBytes(itemFile));
+    const sourceBefore = fileBytes(attemptPath(dir, source.id));
+    reuseRed(dir, reuseOptions(source, target));
+    assert.deepEqual(snapshotTree(path.join(dir, '.factory/orchestration')), orchestrationBefore);
+    const itemAfter = JSON.parse(fileBytes(itemFile));
+    assert.equal(itemAfter.factory.taskType, itemBefore.factory.taskType);
+    assert.deepEqual(itemAfter.factory, itemBefore.factory);
+    assert.equal(fileBytes(attemptPath(dir, source.id)), sourceBefore);
+  } finally {
+    cleanup(dir);
+  }
+});

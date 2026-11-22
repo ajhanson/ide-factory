@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { attemptPath, getAttempt } from './attempt.mjs';
 import { attestationFailureReason } from './complete.mjs';
-import { readPolicyVersion } from './principal.mjs';
+import { confirmPrincipal, readPolicyVersion } from './principal.mjs';
 import { readText, writeText } from './layout.mjs';
 import { isFailingRed, redForKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
 import {
@@ -163,6 +163,27 @@ function requireText(value, label) {
   return value.trim();
 }
 
+/**
+ * The approver must differ from the target's implementer. Under policy version 2
+ * the approver must equal a principal the configured verifier confirms.
+ * @returns {{ approver: string, principal?: object }}
+ */
+function authorizeApprover(project, target, options) {
+  const approver = requireText(options.approver, 'approver');
+  if (typeof target.implementerId === 'string' && target.implementerId === approver) {
+    throw new Error('red exception approver must differ from the implementer');
+  }
+  if (readPolicyVersion(project) < 2) return { approver };
+  const principal = confirmPrincipal(project, {
+    provider: options.principalProvider,
+    subject: options.principalSubject,
+  });
+  if (approver !== principal.subject) {
+    throw new Error('red exception approver must equal the verified principal subject');
+  }
+  return { approver, principal };
+}
+
 function requireBeforeVerifying(target) {
   if (!PRE_VERIFYING_STATES.includes(target.state)) {
     throw new Error(
@@ -232,14 +253,14 @@ function newExceptionId() {
  *   kinds: string[],
  *   approver: string,
  *   reason: string,
- *   principal?: object,
+ *   principalProvider?: string,
+ *   principalSubject?: string,
  * }} options
  * @returns {{ records: object[], files: string[] }}
  */
 export function reuseRed(project, options) {
   const kinds = [...new Set(options.kinds || [])];
   if (kinds.length === 0) throw new Error('reuse requires at least one --kind');
-  const approver = requireText(options.approver, 'approver');
   const reason = requireText(options.reason, 'reason');
   const { target, source } = loadAttempts(project, options.targetAttemptId, options.sourceAttemptId);
 
@@ -294,6 +315,7 @@ export function reuseRed(project, options) {
     }
   }
 
+  const { approver, principal } = authorizeApprover(project, target, options);
   const issuance = new Date().toISOString();
   const policyVersion = readPolicyVersion(project);
   const records = [];
@@ -313,7 +335,7 @@ export function reuseRed(project, options) {
       issuance,
       policyVersion,
       sourceRevision: headSha,
-      ...(options.principal ? { principal: options.principal } : {}),
+      ...(principal ? { principal } : {}),
       source: {
         attemptId: source.id,
         commandDigest: red.commandDigest,
@@ -357,14 +379,14 @@ function isStuck(attempt, kind) {
  *   approver: string,
  *   reason: string,
  *   acknowledgeNotStuck?: boolean,
- *   principal?: object,
+ *   principalProvider?: string,
+ *   principalSubject?: string,
  * }} options
  * @returns {{ records: object[], files: string[] }}
  */
 export function waiveRed(project, options) {
   const kinds = [...new Set(options.kinds || [])];
   if (kinds.length === 0) throw new Error('waive requires at least one --kind');
-  const approver = requireText(options.approver, 'approver');
   const reason = requireText(options.reason, 'reason');
   const target = getAttempt(project, options.targetAttemptId);
   if (!target) throw new Error(`Attempt not found: ${options.targetAttemptId}`);
@@ -385,6 +407,7 @@ export function waiveRed(project, options) {
   const { sourceRevision: headSha } = resolveGitBinding(project);
   if (!headSha) throw new Error('waive requires a resolvable git HEAD');
 
+  const { approver, principal } = authorizeApprover(project, target, options);
   const issuance = new Date().toISOString();
   const policyVersion = readPolicyVersion(project);
   const records = [];
@@ -403,7 +426,7 @@ export function waiveRed(project, options) {
       issuance,
       policyVersion,
       sourceRevision: headSha,
-      ...(options.principal ? { principal: options.principal } : {}),
+      ...(principal ? { principal } : {}),
       noRedExists: true,
       acknowledgedNotStuck: !isStuck(target, kind),
     };
