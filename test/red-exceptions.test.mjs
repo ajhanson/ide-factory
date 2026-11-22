@@ -9,6 +9,8 @@ import {
   exceptionFilePath,
   redSatisfaction,
   reuseRed,
+  waiveRed,
+  WAIVER_WARNING_SENTENCE,
 } from '../src/lib/red-exceptions.mjs';
 import { resolveGitBinding } from '../src/lib/verification-evidence.mjs';
 import { cleanup, idefactory, tempProject } from './helpers.mjs';
@@ -668,6 +670,91 @@ test('reuse provenance names the source attempt and its red without claiming a r
     assert.equal('exitCode' in record, false);
     assert.equal('issuer' in record, false);
     assert.equal(getAttempt(dir, target.id).evidence.reds ?? null, null);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+async function stuckAttempt(dir) {
+  const started = await seedAttempt(dir);
+  writeRegistry(dir, 0);
+  ensureCleanGitCommit(dir);
+  await toImplementing(dir, started.id);
+  const vacuous = await idefactory(dir, ['verify', 'run', started.id, '--check', 'unit', '--red']);
+  assert.notEqual(vacuous.code, 0);
+  assert.match(vacuous.err, /vacuous-red/);
+  return getAttempt(dir, started.id);
+}
+
+function waiveOptions(attempt, overrides = {}) {
+  return {
+    targetAttemptId: attempt.id,
+    kinds: ['unit'],
+    approver: 'human-1',
+    reason: 'implementation already satisfies the requirement',
+    ...overrides,
+  };
+}
+
+test('waive after a recorded vacuous-red writes a waiver that states no red exists', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const result = waiveRed(dir, waiveOptions(attempt));
+    assert.equal(result.records.length, 1);
+    const record = JSON.parse(fs.readFileSync(result.files[0], 'utf8'));
+    assert.equal(record.type, 'waiver');
+    assert.equal(record.kind, 'unit');
+    assert.equal(record.attemptId, attempt.id);
+    assert.equal(record.noRedExists, true);
+    assert.equal(record.acknowledgedNotStuck, false);
+    assert.equal(record.approver, 'human-1');
+    assert.equal(record.reason, 'implementation already satisfies the requirement');
+    assert.equal('source' in record, false);
+    const stored = getAttempt(dir, attempt.id);
+    assert.equal(redSatisfaction(dir, stored, 'unit'), 'waiver');
+    assert.equal(stored.evidence.reds ?? null, null);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('waive refuses a missing reason and records nothing', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const before = fileBytes(attemptPath(dir, attempt.id));
+    for (const reason of ['', '   ', undefined]) {
+      assert.throws(() => waiveRed(dir, waiveOptions(attempt, { reason })), /reason is required/);
+    }
+    assert.equal(fileBytes(attemptPath(dir, attempt.id)), before);
+    assert.equal(fs.existsSync(path.join(dir, '.factory/exceptions/red')), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('waive before a stuck signal is refused with the warning unless acknowledged', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    ensureCleanGitCommit(dir);
+    await toImplementing(dir, started.id);
+    const attempt = getAttempt(dir, started.id);
+    const before = fileBytes(attemptPath(dir, attempt.id));
+    assert.throws(() => waiveRed(dir, waiveOptions(attempt)), (error) => {
+      assert.ok(error.message.includes(WAIVER_WARNING_SENTENCE));
+      assert.match(error.message, /--acknowledge-not-stuck/);
+      assert.match(error.message, /red reuse/);
+      return true;
+    });
+    assert.equal(fileBytes(attemptPath(dir, attempt.id)), before);
+    assert.equal(fs.existsSync(path.join(dir, '.factory/exceptions/red')), false);
+
+    const result = waiveRed(dir, waiveOptions(attempt, { acknowledgeNotStuck: true }));
+    const record = JSON.parse(fs.readFileSync(result.files[0], 'utf8'));
+    assert.equal(record.acknowledgedNotStuck, true);
+    assert.equal(redSatisfaction(dir, getAttempt(dir, attempt.id), 'unit'), 'waiver');
   } finally {
     cleanup(dir);
   }

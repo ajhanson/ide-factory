@@ -5,7 +5,7 @@ import { attemptPath, getAttempt } from './attempt.mjs';
 import { attestationFailureReason } from './complete.mjs';
 import { readPolicyVersion } from './principal.mjs';
 import { readText, writeText } from './layout.mjs';
-import { isFailingRed, redForKind, requiredTestKinds } from './red-evidence.mjs';
+import { isFailingRed, redForKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
 import {
   canonicalJson,
   commandDigest,
@@ -323,6 +323,89 @@ export function reuseRed(project, options) {
         finishedAt: red.finishedAt ?? null,
         recordDigest: digestText(canonicalJson(red)),
       },
+    };
+    const bound = bindRedException(project, target.id, record);
+    records.push(record);
+    files.push(bound.file);
+  }
+  return { records, files };
+}
+
+export const WAIVER_WARNING_SENTENCE = 'Waiving a red before the system is stuck is discouraged.';
+
+export function waiverWarning(kinds) {
+  return [
+    WAIVER_WARNING_SENTENCE,
+    `This attempt has no recorded vacuous-red for: ${kinds.join(', ')}.`,
+    'Prefer `idefactory red reuse` when a rejected attempt holds a genuine red, and let the system get stuck first.',
+    'To override anyway, repeat the command with --acknowledge-not-stuck.',
+  ].join(' ');
+}
+
+function isStuck(attempt, kind) {
+  return (attempt.evidence?.retryCounts?.[retryKey('vacuous-red', kind)] || 0) >= 1;
+}
+
+/**
+ * Record a waiver exception on an attempt for each named kind.
+ * Refuses before a stuck signal unless the human acknowledged the warning.
+ *
+ * @param {string} project
+ * @param {{
+ *   targetAttemptId: string,
+ *   kinds: string[],
+ *   approver: string,
+ *   reason: string,
+ *   acknowledgeNotStuck?: boolean,
+ *   principal?: object,
+ * }} options
+ * @returns {{ records: object[], files: string[] }}
+ */
+export function waiveRed(project, options) {
+  const kinds = [...new Set(options.kinds || [])];
+  if (kinds.length === 0) throw new Error('waive requires at least one --kind');
+  const approver = requireText(options.approver, 'approver');
+  const reason = requireText(options.reason, 'reason');
+  const target = getAttempt(project, options.targetAttemptId);
+  if (!target) throw new Error(`Attempt not found: ${options.targetAttemptId}`);
+
+  requireBeforeVerifying(target);
+  requireCodeItem(project, target, kinds);
+  for (const kind of kinds) {
+    if (target.evidence?.redExceptions?.[kind]) {
+      throw new Error(`attempt already has an exception for ${kind}`);
+    }
+  }
+
+  const notStuck = kinds.filter((kind) => !isStuck(target, kind));
+  if (notStuck.length > 0 && !options.acknowledgeNotStuck) {
+    throw new Error(waiverWarning(notStuck));
+  }
+
+  const { sourceRevision: headSha } = resolveGitBinding(project);
+  if (!headSha) throw new Error('waive requires a resolvable git HEAD');
+
+  const issuance = new Date().toISOString();
+  const policyVersion = readPolicyVersion(project);
+  const records = [];
+  const files = [];
+  for (const kind of kinds) {
+    const record = {
+      schemaVersion: 1,
+      id: newExceptionId(),
+      type: 'waiver',
+      change: target.change,
+      task: target.taskId,
+      attemptId: target.id,
+      kind,
+      approver,
+      reason,
+      issuance,
+      policyVersion,
+      sourceRevision: headSha,
+      ...(options.principal ? { principal: options.principal } : {}),
+      noRedExists: true,
+      acknowledgedNotStuck: !isStuck(target, kind),
     };
     const bound = bindRedException(project, target.id, record);
     records.push(record);

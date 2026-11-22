@@ -12,8 +12,8 @@
 
 ## 3. Waiver override and warning
 
-- [ ] 3.1 Add failing tests that `waive` after a recorded `vacuous-red` for the kind writes a waiver with `acknowledgedNotStuck: false` and no flag, refuses without a reason, and writes a record stating that no red exists. Implement `waiveRed` using `retryCounts["vacuous-red:<kind>"]` as the stuck signal. Verify with `node --test test/red-exceptions.test.mjs`.
-- [ ] 3.2 Add failing tests that `waive` with no recorded `vacuous-red` and no flag exits non-zero, prints the shared warning, and writes no file and no attempt change, and that the same call with `--acknowledge-not-stuck` writes a waiver with `acknowledgedNotStuck: true`. Implement the refusal and the single warning string. Verify with `node --test test/red-exceptions.test.mjs`.
+- [x] 3.1 Add failing tests that `waive` after a recorded `vacuous-red` for the kind writes a waiver with `acknowledgedNotStuck: false` and no flag, refuses without a reason, and writes a record stating that no red exists. Implement `waiveRed` using `retryCounts["vacuous-red:<kind>"]` as the stuck signal. Verify with `node --test test/red-exceptions.test.mjs`.
+- [x] 3.2 Add failing tests that `waive` with no recorded `vacuous-red` and no flag exits non-zero, prints the shared warning, and writes no file and no attempt change, and that the same call with `--acknowledge-not-stuck` writes a waiver with `acknowledgedNotStuck: true`. Implement the refusal and the single warning string. Verify with `node --test test/red-exceptions.test.mjs`.
 - [ ] 3.3 Add failing tests that reuse and waive refuse an approver equal to the target's implementer, an empty approver or reason, and, at policy version 2, an approver that is not a verified principal; that a second exception for the same kind fails and leaves the first file unchanged; that an exception for one kind does not satisfy another kind or another attempt; and that neither command edits a closed run session or the work item's `taskType`. Implement the shared authorization checks. Verify with `node --test test/red-exceptions.test.mjs test/verified-principal.test.mjs`.
 
 ## 4. CLI, halt, and events
