@@ -22,7 +22,8 @@ import {
   STICKY_STOP_REASONS,
   writeRunSession,
 } from './run-session.mjs';
-import { classifyCheckOutcome, isRequiredTestKind, retryKey } from './red-evidence.mjs';
+import { classifyCheckOutcome, isRequiredTestKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
+import { redSatisfaction } from './red-exceptions.mjs';
 import { humanGateAllows } from './risk-gates.mjs';
 import { resolveGitBinding, validateCheckRegistry } from './verification-evidence.mjs';
 import { getWorkItem, listWorkItems, selectReady, workCounts } from './work.mjs';
@@ -253,7 +254,7 @@ export function runFactory(project, env, {
       };
     }
 
-    const stage = stageForState(attempt.state, item);
+    const stage = stageForState(attempt.state, item, { project, attempt });
     if (stage.needsAgent) {
       if (
         stage.nextState === 'accepted'
@@ -425,7 +426,7 @@ function closeRunSession(project, session, stopReason, extra = {}) {
   return written;
 }
 
-function stageForState(state, item) {
+function stageForState(state, item, { project, attempt } = {}) {
   const roles = item.factory?.roles || ['engineer', 'reviewer', 'scribe'];
   const implementer = item.factory?.route === 'quick'
     ? 'engineer'
@@ -447,6 +448,14 @@ function stageForState(state, item) {
           role: implementer,
           nextState: 'verifying',
           message: 'Lightweight item. Implement and run verification. A failing test is not required.',
+        };
+      }
+      if (project && attempt && redRequirementMet(project, attempt, item)) {
+        return {
+          needsAgent: true,
+          role: implementer,
+          nextState: 'verifying',
+          message: 'Every required test kind has a red or a human-authorized red exception. Implement until green, run verification profile checks, and move to verifying.',
         };
       }
       return {
@@ -497,6 +506,12 @@ function stageForState(state, item) {
     default:
       return { needsAgent: false };
   }
+}
+
+function redRequirementMet(project, attempt, item) {
+  const kinds = requiredTestKinds(item.factory?.checks);
+  if (kinds.length === 0) return false;
+  return kinds.every((kind) => redSatisfaction(project, attempt, kind) !== 'missing');
 }
 
 function primaryRole(item) {

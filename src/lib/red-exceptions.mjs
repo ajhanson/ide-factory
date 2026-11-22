@@ -4,7 +4,8 @@ import path from 'node:path';
 import { attemptPath, getAttempt } from './attempt.mjs';
 import { attestationFailureReason } from './complete.mjs';
 import { confirmPrincipal, readPolicyVersion } from './principal.mjs';
-import { readText, writeText } from './layout.mjs';
+import { appendControlEvent } from './event-log.mjs';
+import { ledger, readText, writeText } from './layout.mjs';
 import { isFailingRed, redForKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
 import {
   canonicalJson,
@@ -95,6 +96,21 @@ export function bindRedException(project, attemptId, record) {
   };
   attempt.updatedAt = new Date().toISOString();
   writeText(attemptPath(project, attemptId), JSON.stringify(attempt, null, 2));
+  ledger(project, 'red-exception', {
+    exceptionId: record.id,
+    exceptionType: record.type,
+    attemptId,
+    kind: record.kind,
+  });
+  appendControlEvent(project, {
+    type: 'red-exception.recorded',
+    time: record.issuance,
+    id: record.id,
+    exceptionType: record.type,
+    attemptId,
+    change: record.change,
+    task: record.task,
+  });
   return { file, digest, attempt };
 }
 

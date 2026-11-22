@@ -1064,3 +1064,144 @@ test('red reuse and red waive refuse while HALT exists', async () => {
     cleanup(dir);
   }
 });
+
+function readEvents(dir) {
+  const file = path.join(dir, '.factory/observability/events.jsonl');
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+}
+
+test('recording an exception appends one event that omits the reason', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const before = readEvents(dir).filter((event) => event.type === 'red-exception.recorded');
+    assert.equal(before.length, 0);
+    const reason = 'secret-looking reason text';
+    const ok = await idefactory(dir, [
+      'red', 'waive', attempt.id, '--kind', 'unit', '--note', reason, '--approver', 'human-1',
+    ]);
+    assert.equal(ok.code, 0, ok.err + ok.out);
+    const exceptionId = JSON.parse(ok.out).exceptions[0].id;
+    const events = readEvents(dir).filter((event) => event.type === 'red-exception.recorded');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].exceptionType, 'waiver');
+    assert.equal(events[0].id, exceptionId);
+    assert.equal(events[0].attemptId, attempt.id);
+    assert.equal(events[0].change, 'demo');
+    assert.equal(events[0].task, '1.1');
+    assert.match(events[0].time, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(JSON.stringify(events[0]).includes(reason), false);
+    assert.equal(
+      fs.readFileSync(path.join(dir, '.factory/observability/events.jsonl'), 'utf8').includes(reason),
+      false,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse appends a reuse event per kind', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const ok = await idefactory(dir, cliReuseArgs(source, target));
+    assert.equal(ok.code, 0, ok.err + ok.out);
+    const events = readEvents(dir).filter((event) => event.type === 'red-exception.recorded');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].exceptionType, 'reuse');
+    assert.equal(events[0].attemptId, target.id);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('an event-log failure leaves the exception in place and warns', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const eventFile = path.join(dir, '.factory/observability/events.jsonl');
+    fs.rmSync(eventFile, { force: true });
+    fs.mkdirSync(eventFile, { recursive: true });
+    const ok = await idefactory(dir, [
+      'red', 'waive', attempt.id, '--kind', 'unit', '--note', 'n', '--approver', 'human-1',
+    ]);
+    assert.equal(ok.code, 0, ok.err + ok.out);
+    assert.match(ok.err, /event-log warning/);
+    assert.equal(redSatisfaction(dir, getAttempt(dir, attempt.id), 'unit'), 'waiver');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function parseRequest(out) {
+  const match = out.match(/```json\n([\s\S]*?)\n```/);
+  assert.ok(match, `orchestration request must include a json block: ${out}`);
+  return JSON.parse(match[1]);
+}
+
+test('run asks for verifying when every required kind has a red or an exception', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    await toImplementing(dir, started.id);
+    const redRequest = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(redRequest.code, 2, redRequest.err + redRequest.out);
+    assert.equal(parseRequest(redRequest.out).nextState, 'red-confirmed');
+
+    bindRedException(dir, started.id, exceptionRecord(getAttempt(dir, started.id)));
+    const proceed = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1', '--new-run']);
+    assert.equal(proceed.code, 2, proceed.err + proceed.out);
+    const request = parseRequest(proceed.out);
+    assert.equal(request.state, 'implementing');
+    assert.equal(request.nextState, 'verifying');
+    assert.doesNotMatch(proceed.out, /Write a failing test/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('run keeps the red request when one required kind is still missing', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir, ['unit', 'integration']);
+    await toImplementing(dir, started.id);
+    bindRedException(dir, started.id, exceptionRecord(getAttempt(dir, started.id)));
+    const result = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(result.code, 2, result.err + result.out);
+    assert.equal(parseRequest(result.out).nextState, 'red-confirmed');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a closed vacuous-red session stays closed after a waiver until --new-run', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    writeRegistry(dir, 0);
+    ensureCleanGitCommit(dir);
+    const first = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(first.code, 2, first.err + first.out);
+    await toImplementing(dir, started.id);
+    const vacuous = await idefactory(dir, ['verify', 'run', started.id, '--check', 'unit', '--red']);
+    assert.notEqual(vacuous.code, 0);
+
+    const waived = await idefactory(dir, [
+      'red', 'waive', started.id, '--kind', 'unit', '--note', 'n', '--approver', 'human-1',
+    ]);
+    assert.equal(waived.code, 0, waived.err + waived.out);
+
+    const stillClosed = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(stillClosed.code, 0, stillClosed.err + stillClosed.out);
+    assert.match(stillClosed.out, /vacuous-red/);
+    assert.doesNotMatch(stillClosed.out, /Orchestration request/);
+
+    const reopened = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1', '--new-run']);
+    assert.equal(reopened.code, 2, reopened.err + reopened.out);
+    assert.equal(parseRequest(reopened.out).nextState, 'verifying');
+  } finally {
+    cleanup(dir);
+  }
+});
