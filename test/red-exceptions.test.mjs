@@ -1391,3 +1391,97 @@ test('help lists red reuse and red waive', async () => {
     cleanup(dir);
   }
 });
+
+async function finishThroughReview(dir, attemptId) {
+  const pass = await idefactory(dir, ['verify', 'run', attemptId, '--check', 'unit']);
+  assert.equal(pass.code, 0, pass.err + pass.out);
+  assert.equal((await transition(dir, attemptId, 'verifying')).code, 0);
+  assert.equal((await transition(dir, attemptId, 'awaiting-review')).code, 0);
+  const accepted = await transition(dir, attemptId, 'accepted', {
+    reviewerId: 'reviewer-2',
+    verdict: 'ACCEPT',
+  });
+  assert.equal(accepted.code, 0, accepted.err);
+  const done = await idefactory(dir, ['complete', 'demo', '1.1', '--attempt', attemptId]);
+  assert.equal(done.code, 0, done.err + done.out);
+  const stored = getAttempt(dir, attemptId);
+  assert.equal(stored.state, 'finalized');
+  assert.equal(stored.evidence.reds ?? null, null, 'no CLI red may be claimed on the replacement');
+  return stored;
+}
+
+test('issue 27: a verification-only retry completes through red reuse with no new red', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const vacuous = await idefactory(dir, ['verify', 'run', target.id, '--check', 'unit', '--red']);
+    assert.notEqual(vacuous.code, 0);
+    assert.match(vacuous.err, /vacuous-red/);
+    const blocked = await transition(dir, target.id, 'verifying');
+    assert.notEqual(blocked.code, 0);
+
+    const sourceBefore = fileBytes(attemptPath(dir, source.id));
+    const reused = await idefactory(dir, [
+      'red', 'reuse', target.id, '--from', source.id, '--kind', 'unit',
+      '--note', 'rejected only for dirty-workspace verification', '--approver', 'human-1',
+    ]);
+    assert.equal(reused.code, 0, reused.err + reused.out);
+    assert.equal(JSON.parse(reused.out).exceptions[0].type, 'reuse');
+    assert.equal(fileBytes(attemptPath(dir, source.id)), sourceBefore);
+    assert.equal(getWorkItem(dir, 'demo', '1.1').factory.taskType, 'code');
+
+    const stored = await finishThroughReview(dir, target.id);
+    assert.equal(stored.evidence.redExceptions.unit.type, 'reuse');
+    assert.equal(getAttempt(dir, source.id).state, 'rejected');
+    assert.equal(getWorkItem(dir, 'demo', '1.1').status, 'done');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('issue 27: a stuck attempt completes through red waive after vacuous-red', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const waived = await idefactory(dir, [
+      'red', 'waive', attempt.id, '--kind', 'unit',
+      '--note', 'implementation already satisfies the requirement', '--approver', 'human-1',
+    ]);
+    assert.equal(waived.code, 0, waived.err + waived.out);
+    const row = JSON.parse(waived.out).exceptions[0];
+    assert.equal(row.type, 'waiver');
+    assert.equal(row.acknowledgedNotStuck, false);
+    const stored = await finishThroughReview(dir, attempt.id);
+    assert.equal(stored.evidence.redExceptions.unit.type, 'waiver');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('issue 27: an early waiver is refused with the warning until the human acknowledges it', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    writeRegistry(dir, 0);
+    ensureCleanGitCommit(dir);
+    await toImplementing(dir, started.id);
+    const args = [
+      'red', 'waive', started.id, '--kind', 'unit',
+      '--note', 'human knows the red cannot be reproduced', '--approver', 'human-1',
+    ];
+    const refused = await idefactory(dir, args);
+    assert.notEqual(refused.code, 0);
+    assert.ok(refused.err.includes(WAIVER_WARNING_SENTENCE), refused.err);
+    assert.match(refused.err, /--acknowledge-not-stuck/);
+    assert.equal(getAttempt(dir, started.id).evidence.redExceptions ?? null, null);
+
+    const accepted = await idefactory(dir, [...args, '--acknowledge-not-stuck']);
+    assert.equal(accepted.code, 0, accepted.err + accepted.out);
+    assert.equal(JSON.parse(accepted.out).exceptions[0].acknowledgedNotStuck, true);
+    const stored = await finishThroughReview(dir, started.id);
+    assert.equal(stored.evidence.redExceptions.unit.type, 'waiver');
+  } finally {
+    cleanup(dir);
+  }
+});
