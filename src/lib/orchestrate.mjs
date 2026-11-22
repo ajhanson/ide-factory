@@ -23,7 +23,7 @@ import {
   writeRunSession,
 } from './run-session.mjs';
 import { classifyCheckOutcome, isRequiredTestKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
-import { redSatisfaction } from './red-exceptions.mjs';
+import { describeException, listAttemptExceptions, redSatisfaction } from './red-exceptions.mjs';
 import { humanGateAllows } from './risk-gates.mjs';
 import { resolveGitBinding, validateCheckRegistry } from './verification-evidence.mjs';
 import { getWorkItem, listWorkItems, selectReady, workCounts } from './work.mjs';
@@ -340,7 +340,7 @@ export function runFactory(project, env, {
       ledger(project, 'run-needs-agent', { change, taskId: item.id, role: stage.role, state: attempt.state });
       return {
         code: EXIT_NEEDS_AGENT,
-        text: renderRequest({ ...request, item, attempt, message: stage.message }),
+        text: renderRequest({ ...request, item, attempt, message: withRedExceptions(project, attempt, stage) }),
         stopReason: 'needs-agent',
         request,
       };
@@ -524,6 +524,13 @@ function profileForRole(config, role) {
   return config.roles?.[role]?.modelProfile
     || config.modelProfiles && 'coding-standard'
     || 'coding-standard';
+}
+
+function withRedExceptions(project, attempt, stage) {
+  if (stage.role !== 'reviewer' && stage.role !== 'security-reviewer') return stage.message;
+  const lines = listAttemptExceptions(project, attempt).map((row) => `- ${describeException(row)}`);
+  if (lines.length === 0) return stage.message;
+  return `${stage.message}\n\nRed exceptions:\n${lines.join('\n')}`;
 }
 
 function renderRequest(request) {

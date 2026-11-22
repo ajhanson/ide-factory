@@ -12,8 +12,10 @@ import {
   waiveRed,
   WAIVER_WARNING_SENTENCE,
 } from '../src/lib/red-exceptions.mjs';
+import { renderWorkPacket } from '../src/lib/queue.mjs';
 import { resolveGitBinding } from '../src/lib/verification-evidence.mjs';
-import { cleanup, idefactory, tempProject } from './helpers.mjs';
+import { getWorkItem } from '../src/lib/work.mjs';
+import { cleanup, idefactory, repoRoot, tempProject } from './helpers.mjs';
 
 function writeRegistry(dir, exitCode) {
   fs.writeFileSync(
@@ -1201,6 +1203,150 @@ test('a closed vacuous-red session stays closed after a waiver until --new-run',
     const reopened = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1', '--new-run']);
     assert.equal(reopened.code, 2, reopened.err + reopened.out);
     assert.equal(parseRequest(reopened.out).nextState, 'verifying');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('status JSON and text name each exception and say no red ran', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    ensureCleanGitCommit(dir);
+    await toImplementing(dir, started.id);
+    const quiet = await idefactory(dir, ['status', '--json']);
+    assert.deepEqual(JSON.parse(quiet.out).redExceptions, []);
+    assert.doesNotMatch((await idefactory(dir, ['status'])).out, /No red ran/);
+
+    waiveRed(dir, waiveOptions(getAttempt(dir, started.id), {
+      acknowledgeNotStuck: true,
+      reason: 'already satisfied by the clean build',
+    }));
+    const json = JSON.parse((await idefactory(dir, ['status', '--json'])).out);
+    assert.equal(json.redExceptions.length, 1);
+    const entry = json.redExceptions[0];
+    assert.equal(entry.attemptId, started.id);
+    assert.equal(entry.type, 'waiver');
+    assert.equal(entry.kind, 'unit');
+    assert.equal(entry.approver, 'human-1');
+    assert.equal(entry.reason, 'already satisfied by the clean build');
+    assert.equal(entry.noRedRan, true);
+    assert.equal(entry.acknowledgedNotStuck, true);
+
+    const text = (await idefactory(dir, ['status'])).out;
+    assert.match(text, /No red ran for unit on attempt/);
+    assert.match(text, /waiver by human-1: already satisfied by the clean build/);
+    assert.match(text, /acknowledged before the system was stuck/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('status marks a reuse exception with its source attempt', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    reuseRed(dir, reuseOptions(source, target));
+    const json = JSON.parse((await idefactory(dir, ['status', '--json'])).out);
+    const entry = json.redExceptions.find((row) => row.attemptId === target.id);
+    assert.equal(entry.type, 'reuse');
+    assert.equal(entry.sourceAttemptId, source.id);
+    assert.equal(entry.noRedRan, true);
+    assert.equal('acknowledgedNotStuck' in entry, false);
+    assert.match((await idefactory(dir, ['status'])).out, new RegExp(`reuse of attempt ${source.id} red by human-1`));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('the reviewer packet names the exception and the implementer packet does not need it', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    ensureCleanGitCommit(dir);
+    await toImplementing(dir, started.id);
+    const item = () => getWorkItem(dir, 'demo', '1.1');
+    assert.doesNotMatch(renderWorkPacket(dir, item(), 'reviewer'), /Red exceptions/);
+
+    waiveRed(dir, waiveOptions(getAttempt(dir, started.id), { acknowledgeNotStuck: true }));
+    const reviewer = renderWorkPacket(dir, item(), 'reviewer');
+    assert.match(reviewer, /Red exceptions/);
+    assert.match(reviewer, /No red ran for unit on attempt/);
+    assert.match(reviewer, /waiver by human-1: implementation already satisfies the requirement/);
+    const security = renderWorkPacket(dir, item(), 'security-reviewer');
+    assert.match(security, /No red ran for unit/);
+    assert.doesNotMatch(renderWorkPacket(dir, item(), 'engineer'), /Red exceptions/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('the reviewer orchestration request names the exception', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir);
+    await toImplementing(dir, started.id);
+    await recordPass(dir, started.id);
+    bindRedException(dir, started.id, exceptionRecord(getAttempt(dir, started.id)));
+    assert.equal((await transition(dir, started.id, 'verifying')).code, 0);
+    const result = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(result.code, 2, result.err + result.out);
+    assert.match(result.out, /^Role: reviewer$/m);
+    assert.match(result.out, /No red ran for unit on attempt/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('the verdict comment names the exception when the attempt has one', async () => {
+  const dir = tempProject();
+  const change = 'demo-red-exception-comment';
+  const attemptId = 'cccccccc-dddd-4eee-8fff-000000000001';
+  const logPath = path.join(dir, 'forge-argv.log');
+  const dbPath = path.join(dir, 'forge-db.json');
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    ensureCleanGitCommit(dir);
+    const forgeEnv = {
+      IDEFACTORY_FORGE: path.join(repoRoot, 'support/fake-forge.mjs'),
+      IDEFACTORY_FORGE_LOG: logPath,
+      IDEFACTORY_FORGE_DB: dbPath,
+    };
+    const opened = await idefactory(dir, ['pr', 'open', change], forgeEnv);
+    assert.equal(opened.code, 0, opened.err || opened.out);
+    fs.mkdirSync(path.join(dir, '.factory/attempts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.factory/attempts', `${attemptId}.json`),
+      `${JSON.stringify({
+        id: attemptId,
+        change,
+        taskId: '1.1',
+        state: 'awaiting-review',
+        implementerRole: 'engineer',
+        implementerId: 'engineer-1',
+        reviewerId: null,
+        modelProfile: 'coding-standard',
+        evidence: { red: null, verification: [], security: [], review: null, changedFiles: [], baseRev: null },
+        history: [],
+        createdAt: '2026-10-27T00:00:00.000Z',
+        updatedAt: '2026-10-27T00:00:00.000Z',
+      }, null, 2)}\n`,
+    );
+    bindRedException(dir, attemptId, exceptionRecord(getAttempt(dir, attemptId)));
+    const accepted = await idefactory(dir, [
+      'attempt', 'transition', attemptId, 'accepted',
+      '--evidence', JSON.stringify({ reviewerId: 'reviewer-1', verdict: 'ACCEPT' }),
+    ], forgeEnv);
+    assert.equal(accepted.code, 0, accepted.err || accepted.out);
+    const bodies = fs.readFileSync(logPath, 'utf8')
+      .split('\n').filter(Boolean).map((line) => JSON.parse(line))
+      .filter((argv) => argv[0] === 'pr' && argv[1] === 'comment')
+      .map((argv) => argv[argv.indexOf('--body') + 1]);
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /Verdict: ACCEPT/);
+    assert.match(bodies[0], /No red ran for unit on attempt/);
+    assert.match(bodies[0], /waiver by human-1: test exception/);
   } finally {
     cleanup(dir);
   }

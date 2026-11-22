@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { attemptsRoot, getAttempt } from './attempt.mjs';
 import { classifyTask, defaultAcceptanceCriteria, parseFactoryBlock } from './classify.mjs';
+import { describeException, listAttemptExceptions } from './red-exceptions.mjs';
 import { halted, ledger, readText, writeText } from './layout.mjs';
 import {
   ensureWorkDirs,
@@ -363,7 +364,7 @@ function selectAcrossChanges(project) {
 function renderPacket({ role, item, modelProfile, project }) {
   const criteria = (item.acceptanceCriteria || []).map((entry) => `- ${entry}`).join('\n');
   const roles = (item.factory?.roles || []).join(', ');
-  const prior = priorRejectionBlock(project, item, role);
+  const prior = priorRejectionBlock(project, item, role) + redExceptionBlock(project, item, role);
   return `# Work packet
 
 Role: ${role}
@@ -409,6 +410,20 @@ function priorRejectionBlock(project, item, role) {
   const notes = priorRejections(project, item.change, item.id);
   if (notes.length === 0) return '';
   return `\nPrior rejections:\n${notes.join('\n')}\n`;
+}
+
+function redExceptionBlock(project, item, role) {
+  if (!project || (role !== 'reviewer' && role !== 'security-reviewer')) return '';
+  const root = attemptsRoot(project);
+  if (!fs.existsSync(root)) return '';
+  const lines = [];
+  for (const name of fs.readdirSync(root).sort()) {
+    if (!name.endsWith('.json')) continue;
+    const attempt = getAttempt(project, name.slice(0, -'.json'.length));
+    if (!attempt || attempt.change !== item.change || attempt.taskId !== item.id) continue;
+    for (const row of listAttemptExceptions(project, attempt)) lines.push(`- ${describeException(row)}`);
+  }
+  return lines.length ? `\nRed exceptions:\n${lines.join('\n')}\n` : '';
 }
 
 function priorRejections(project, change, taskId) {

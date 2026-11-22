@@ -24,7 +24,7 @@
 ## 5. Run routing and visibility
 
 - [x] 5.1 Add failing tests that a `code` attempt in `implementing` whose required kinds are all satisfied by a CLI red or a valid exception is asked to proceed to `verifying` with no red request, that a kind still missing keeps the red request, and that a closed `vacuous-red` session stays closed after an exception is recorded. Update `stageForState` in `src/lib/orchestrate.mjs`. Verify with `node --test test/orchestration.test.mjs test/run-session.test.mjs`.
-- [ ] 5.2 Add failing tests that `status` JSON and text, the reviewer packet, and the pull-request verdict comment each state that no red ran for the kind and name the exception type, approver, and reason, and mark an acknowledged-not-stuck waiver. Implement one shared formatter used by `src/lib/read-model.mjs`, `src/lib/queue.mjs`, and `src/lib/pull-request.mjs`. Verify with `node --test test/status-read-model.test.mjs test/queue.test.mjs test/review-comment.test.mjs`.
+- [x] 5.2 Add failing tests that `status` JSON and text, the reviewer packet, and the pull-request verdict comment each state that no red ran for the kind and name the exception type, approver, and reason, and mark an acknowledged-not-stuck waiver. Implement one shared formatter used by `src/lib/read-model.mjs`, `src/lib/queue.mjs`, and `src/lib/pull-request.mjs`. Verify with `node --test test/status-read-model.test.mjs test/queue.test.mjs test/review-comment.test.mjs`.
 
 ## 6. Skills and documentation
 

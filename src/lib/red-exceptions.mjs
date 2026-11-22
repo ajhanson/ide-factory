@@ -452,3 +452,62 @@ export function waiveRed(project, options) {
   }
   return { records, files };
 }
+
+/**
+ * One row per valid exception bound to an attempt, across every kind.
+ * Rows carry no raw check output.
+ */
+export function listAttemptExceptions(project, attempt) {
+  const rows = [];
+  for (const kind of Object.keys(attempt?.evidence?.redExceptions || {}).sort()) {
+    const record = readBoundException(project, attempt, kind);
+    if (!record) continue;
+    rows.push({
+      attemptId: attempt.id,
+      change: attempt.change,
+      task: attempt.taskId,
+      id: record.id,
+      type: record.type,
+      kind: record.kind,
+      approver: record.approver,
+      reason: record.reason,
+      noRedRan: true,
+      ...(record.type === 'reuse' ? { sourceAttemptId: record.source?.attemptId ?? null } : {}),
+      ...(record.type === 'waiver' ? { acknowledgedNotStuck: record.acknowledgedNotStuck === true } : {}),
+    });
+  }
+  return rows;
+}
+
+/** Every valid exception on every attempt in the project, ordered by attempt id. */
+export function listAllExceptions(project) {
+  const root = path.join(project, '.factory', 'attempts');
+  if (!fs.existsSync(root)) return [];
+  const rows = [];
+  for (const name of fs.readdirSync(root).sort()) {
+    if (!name.endsWith('.json')) continue;
+    let attempt;
+    try {
+      attempt = JSON.parse(readText(path.join(root, name)));
+    } catch {
+      continue;
+    }
+    if (!attempt?.evidence?.redExceptions) continue;
+    rows.push(...listAttemptExceptions(project, attempt));
+  }
+  return rows;
+}
+
+/**
+ * One line per exception, shared by status, the reviewer packet, and the
+ * verdict comment so the wording matches.
+ */
+export function describeException(row, { withReason = true } = {}) {
+  const why = withReason ? `: ${row.reason}` : ` (reason on record ${row.id})`;
+  const how = row.type === 'reuse'
+    ? `reuse of attempt ${row.sourceAttemptId} red by ${row.approver}${why}`
+    : `waiver by ${row.approver}${why}${
+      row.acknowledgedNotStuck ? ' (acknowledged before the system was stuck)' : ''
+    }`;
+  return `No red ran for ${row.kind} on attempt ${row.attemptId}; ${how}`;
+}

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getAttempt } from './attempt.mjs';
+import { describeException, listAttemptExceptions } from './red-exceptions.mjs';
 import {
   buildCommentPullRequestArgv,
   buildCreatePullRequestArgv,
@@ -150,12 +151,23 @@ export function postVerdictComment(project, stored, env = process.env) {
   if (typeof stored.reviewerId === 'string' && stored.reviewerId.length > 0) {
     lines.push(`Reviewer: ${stored.reviewerId}`);
   }
-  const body = `${lines.join('\n')}\n`;
-  const argv = buildCommentPullRequestArgv({
-    number: record.pullRequest.number,
-    body,
-  });
-  assertSafeForgeArgv(argv);
+  const exceptions = listAttemptExceptions(project, attempt);
+  const build = (withReason) => {
+    const body = `${[
+      ...lines,
+      ...exceptions.map((row) => describeException(row, { withReason })),
+    ].join('\n')}\n`;
+    const built = buildCommentPullRequestArgv({ number: record.pullRequest.number, body });
+    assertSafeForgeArgv(built);
+    return built;
+  };
+  let argv;
+  try {
+    argv = build(true);
+  } catch (error) {
+    if (exceptions.length === 0) throw error;
+    argv = build(false);
+  }
   const result = runForge(project, argv, env);
   if (result.status !== 0) {
     throw new Error(result.stderr.trim() || result.stdout.trim() || `forge exited ${result.status}`);
