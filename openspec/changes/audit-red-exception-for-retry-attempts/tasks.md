@@ -18,7 +18,7 @@
 
 ## 4. CLI, halt, and events
 
-- [ ] 4.1 Add failing tests that `idefactory red reuse` and `idefactory red waive` parse `--from`, repeatable `--kind`, `--note`, `--approver`, the principal flags, and `--acknowledge-not-stuck`, that usage text names both commands, that both refuse while `HALT` exists, and that both take the writer lease. Wire `red` in `src/lib/run.mjs` and add `red reuse` and `red waive` to the command keys in `src/lib/writer-lease.mjs`. Verify with `node --test test/red-exceptions.test.mjs test/writer-lease.test.mjs test/approve-help.test.mjs`.
+- [x] 4.1 Add failing tests that `idefactory red reuse` and `idefactory red waive` parse `--from`, repeatable `--kind`, `--note`, `--approver`, the principal flags, and `--acknowledge-not-stuck`, that usage text names both commands, that both refuse while `HALT` exists, and that both take the writer lease. Wire `red` in `src/lib/run.mjs` and add `red reuse` and `red waive` to the command keys in `src/lib/writer-lease.mjs`. Verify with `node --test test/red-exceptions.test.mjs test/writer-lease.test.mjs test/approve-help.test.mjs`.
 - [ ] 4.2 Add failing tests that recording an exception appends one `red-exception.recorded` event naming the exception type, id, attempt, change, and task, omits the reason, and that an event-append failure leaves the exception in place with a warning. Add `exceptionType` to the allowlist in `src/lib/event-log.mjs` and emit the event. Verify with `node --test test/event-log.test.mjs test/red-exceptions.test.mjs`.
 
 ## 5. Run routing and visibility

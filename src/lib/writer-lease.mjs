@@ -21,6 +21,8 @@ const MUTATING = new Set([
   'attempt transition',
   'verify run',
   'verify import',
+  'red reuse',
+  'red waive',
   'complete',
   'pr open',
   'pr comment',
@@ -63,6 +65,12 @@ export function cliCommandKey(cmd, rest = [], flags = {}) {
     if (sub === 'run') return 'verify run';
     if (sub === 'import') return 'verify import';
     return sub ? `verify ${sub}` : 'verify';
+  }
+  if (head === 'red') {
+    const sub = String(rest[0] || '').trim();
+    if (sub === 'reuse') return 'red reuse';
+    if (sub === 'waive') return 'red waive';
+    return sub ? `red ${sub}` : 'red';
   }
   if (head === 'lockout') {
     const sub = String(rest[0] || '').trim();

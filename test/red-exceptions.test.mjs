@@ -103,7 +103,7 @@ function setPolicyVersion(dir, version) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
-async function seedAttempt(dir) {
+async function seedAttempt(dir, checks = ['unit']) {
   assert.equal((await idefactory(dir, ['init'])).code, 0);
   setPolicyVersion(dir, 1);
   fs.mkdirSync(path.join(dir, 'openspec/changes/demo'), { recursive: true });
@@ -113,7 +113,7 @@ async function seedAttempt(dir) {
       '- [ ] 1.1 Add parser',
       '  factory:',
       '    kind: general',
-      '    checks: [unit]',
+      `    checks: [${checks.join(', ')}]`,
       '    verificationProfile: frontend-low',
       '    roles: [engineer, reviewer, scribe]',
       '',
@@ -926,6 +926,140 @@ test('exceptions do not edit run sessions, the work item class, or the rejected 
     assert.equal(itemAfter.factory.taskType, itemBefore.factory.taskType);
     assert.deepEqual(itemAfter.factory, itemBefore.factory);
     assert.equal(fileBytes(attemptPath(dir, source.id)), sourceBefore);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function cliReuseArgs(source, target, extra = []) {
+  return [
+    'red', 'reuse', target.id,
+    '--from', source.id,
+    '--kind', 'unit',
+    '--note', 'dirty-workspace rejection only',
+    '--approver', 'human-1',
+    ...extra,
+  ];
+}
+
+test('red reuse CLI records a reuse exception and prints one JSON result', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const result = await idefactory(dir, cliReuseArgs(source, target));
+    assert.equal(result.code, 0, result.err + result.out);
+    const body = JSON.parse(result.out);
+    assert.equal(body.attemptId, target.id);
+    assert.equal(body.exceptions.length, 1);
+    assert.equal(body.exceptions[0].type, 'reuse');
+    assert.equal(body.exceptions[0].kind, 'unit');
+    assert.match(body.note, /--new-run/);
+    assert.equal(redSatisfaction(dir, getAttempt(dir, target.id), 'unit'), 'reuse');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('red reuse CLI requires --from, --kind, --note, and --approver', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const missing = [
+      ['red', 'reuse', target.id, '--kind', 'unit', '--note', 'n', '--approver', 'human-1'],
+      ['red', 'reuse', target.id, '--from', source.id, '--note', 'n', '--approver', 'human-1'],
+      ['red', 'reuse', target.id, '--from', source.id, '--kind', 'unit', '--approver', 'human-1'],
+      ['red', 'reuse', target.id, '--from', source.id, '--kind', 'unit', '--note', 'n'],
+      ['red', 'reuse'],
+    ];
+    for (const args of missing) {
+      const result = await idefactory(dir, args);
+      assert.notEqual(result.code, 0, args.join(' '));
+      assert.match(result.err, /Usage: idefactory red reuse/);
+    }
+    assert.equal(noExceptionFiles(dir), true);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('red waive CLI refuses before a stuck signal and accepts the acknowledgment flag', async () => {
+  const dir = tempProject();
+  try {
+    const started = await seedAttempt(dir, ['unit', 'integration']);
+    ensureCleanGitCommit(dir);
+    await toImplementing(dir, started.id);
+    const args = [
+      'red', 'waive', started.id,
+      '--kind', 'unit', '--kind', 'integration',
+      '--note', 'already satisfied', '--approver', 'human-1',
+    ];
+    const refused = await idefactory(dir, args);
+    assert.notEqual(refused.code, 0);
+    assert.ok(refused.err.includes(WAIVER_WARNING_SENTENCE));
+    assert.match(refused.err, /unit, integration/);
+    assert.equal(noExceptionFiles(dir), true);
+
+    const ok = await idefactory(dir, [...args, '--acknowledge-not-stuck']);
+    assert.equal(ok.code, 0, ok.err + ok.out);
+    const body = JSON.parse(ok.out);
+    assert.deepEqual(body.exceptions.map((entry) => entry.kind).sort(), ['integration', 'unit']);
+    assert.equal(body.exceptions.every((entry) => entry.acknowledgedNotStuck === true), true);
+    const stored = getAttempt(dir, started.id);
+    assert.equal(redSatisfaction(dir, stored, 'unit'), 'waiver');
+    assert.equal(redSatisfaction(dir, stored, 'integration'), 'waiver');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('red waive CLI after a stuck signal needs no flag and requires a note', async () => {
+  const dir = tempProject();
+  try {
+    const attempt = await stuckAttempt(dir);
+    const noNote = await idefactory(dir, ['red', 'waive', attempt.id, '--kind', 'unit', '--approver', 'human-1']);
+    assert.notEqual(noNote.code, 0);
+    assert.match(noNote.err, /Usage: idefactory red waive/);
+    const ok = await idefactory(dir, [
+      'red', 'waive', attempt.id, '--kind', 'unit', '--note', 'n', '--approver', 'human-1',
+    ]);
+    assert.equal(ok.code, 0, ok.err + ok.out);
+    assert.equal(JSON.parse(ok.out).exceptions[0].acknowledgedNotStuck, false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('usage text names red reuse and red waive', async () => {
+  const dir = tempProject();
+  try {
+    const result = await idefactory(dir, ['help']);
+    assert.equal(result.code, 0);
+    assert.match(result.out, /idefactory red reuse <targetAttemptId> --from <sourceAttemptId> --kind <kind>/);
+    assert.match(result.out, /idefactory red waive <targetAttemptId> --kind <kind>/);
+    assert.match(result.out, /--acknowledge-not-stuck/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('red reuse and red waive refuse while HALT exists', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    fs.writeFileSync(path.join(dir, 'HALT'), 'stop\n');
+    const reuse = await idefactory(dir, cliReuseArgs(source, target));
+    assert.notEqual(reuse.code, 0);
+    assert.match(reuse.err, /HALT/);
+    const waive = await idefactory(dir, [
+      'red', 'waive', target.id, '--kind', 'unit', '--note', 'n', '--approver', 'human-1',
+      '--acknowledge-not-stuck',
+    ]);
+    assert.notEqual(waive.code, 0);
+    assert.match(waive.err, /HALT/);
+    assert.equal(noExceptionFiles(dir), true);
   } finally {
     cleanup(dir);
   }
