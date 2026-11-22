@@ -1367,3 +1367,27 @@ test('every shipped copy of the build skills documents the red exception command
     }
   }
 });
+
+test('README and governance document the red exception commands and the stuck-first advice', () => {
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+  const governance = fs.readFileSync(path.join(repoRoot, 'templates/factory/governance.md'), 'utf8');
+  for (const [label, text] of [['README', readme], ['governance', governance]]) {
+    assert.match(text, /idefactory red reuse/, label);
+    assert.match(text, /idefactory red waive/, label);
+    assert.match(text, /--acknowledge-not-stuck/, label);
+    assert.ok(text.includes(WAIVER_WARNING_SENTENCE), `${label} warning sentence`);
+  }
+  assert.match(readme, /\| `idefactory red reuse` \/ `waive` \|/);
+});
+
+test('help lists red reuse and red waive', async () => {
+  const dir = tempProject();
+  try {
+    const help = await idefactory(dir, ['--help']);
+    assert.match(help.out, /idefactory red reuse/);
+    assert.match(help.out, /idefactory red waive/);
+    assert.match(help.out, /--acknowledge-not-stuck/);
+  } finally {
+    cleanup(dir);
+  }
+});

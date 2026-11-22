@@ -114,6 +114,17 @@ Mutating commands take a single writer lease at `.factory/orchestration/writer.l
 
 `idefactory verify run <attemptId> --check <kind>` stores the check result from the registry command. Completion does not accept a pass/fail flag supplied on the transition.
 
+### Red exceptions
+
+A `code` item needs a recorded failing CLI red before it can move to `verifying`. When a rejected attempt held a genuine red and its replacement already passes, the replacement stops with `vacuous-red` and no new red can run. A human can authorize an audited exception instead of a fake red:
+
+```bash
+idefactory red reuse <targetAttemptId> --from <sourceAttemptId> --kind unit --note "verification-only retry" --approver <human>
+idefactory red waive <targetAttemptId> --kind unit --note "reason" --approver <human>
+```
+
+`red reuse` binds the rejected attempt's red to the replacement by digest. It needs a clean HEAD, a passing CLI verification on that HEAD, and an approver who is not the implementer. `red waive` records that no red exists. Waiving a red before the system is stuck is discouraged. The command refuses until the attempt has hit `vacuous-red` for that kind, and it proceeds earlier only when the human repeats it with `--acknowledge-not-stuck`. Neither command writes `evidence.reds`, and neither waives clean-revision verification, independent review, or lockouts. Status, the reviewer packet, and the verdict comment say that no red ran and name the exception, approver, and reason.
+
 ```mermaid
 flowchart TD
   start["idefactory run"]
@@ -155,6 +166,7 @@ flowchart TD
 | `idefactory run` | Resume the persisted run and print the next request or stop reason |
 | `idefactory attempt …` | Start, transition, or show an execution attempt |
 | `idefactory verify run` | Run a registered check and store CLI evidence |
+| `idefactory red reuse` / `waive` | Record an audited red exception for a verification-only retry. Does not write a red |
 | `idefactory complete` | Journal the finalization and mark an accepted attempt done |
 | `idefactory approve` / `reject` | Record a human decision. Does not publish or spend |
 | `idefactory lockout` | Create or resolve a reviewer lockout |
