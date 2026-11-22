@@ -10,7 +10,8 @@ import {
 } from './finalization-recovery.mjs';
 import { hasActiveLockout } from './govern.mjs';
 import { halted, ledger, readText } from './layout.mjs';
-import { isFailingRed, redForKind, requiredTestKinds } from './red-evidence.mjs';
+import { requiredTestKinds } from './red-evidence.mjs';
+import { redSatisfaction } from './red-exceptions.mjs';
 import {
   assertPassingCliSecurityEvidence,
   humanGateAllows,
@@ -261,8 +262,8 @@ function assertChecksPassed(project, attempt, required, options = {}) {
   const taskType = options.taskType === 'lightweight' ? 'lightweight' : 'code';
   if (taskType === 'code') {
     for (const kind of requiredTestKinds(required)) {
-      if (!isFailingRed(redForKind(attempt, kind))) {
-        throw new Error(`complete requires a recorded failing CLI red for: ${kind}`);
+      if (redSatisfaction(project, attempt, kind) === 'missing') {
+        throw new Error(`complete requires a recorded failing CLI red or red exception for: ${kind}`);
       }
     }
   }
@@ -274,7 +275,7 @@ function assertChecksPassed(project, attempt, required, options = {}) {
  * Return null when the record passes from attestation facts.
  * Ignores any caller-supplied `passed` boolean.
  */
-function attestationFailureReason(record, { attemptId, registryDigest, headSha }) {
+export function attestationFailureReason(record, { attemptId, registryDigest, headSha }) {
   if (record.issuer !== 'cli' && record.issuer !== 'import') {
     return 'verification-command attestation requires issuer cli or import';
   }

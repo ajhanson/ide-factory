@@ -12,6 +12,7 @@ import { buildPacket, syncTasks } from './queue.mjs';
 import { scaffoldConsumerCi } from './ci-scaffold.mjs';
 import { capturePullRequestComments, commentOnPullRequest, openPullRequest } from './pull-request.mjs';
 import { mapsFromSequence, setupProject, setupReadinessErrors } from './setup.mjs';
+import { reuseRed, waiveRed } from './red-exceptions.mjs';
 import { verifyImport, verifyRun } from './verification-evidence.mjs';
 import { cliCommandKey, isMutatingCommand, withWriterLease } from './writer-lease.mjs';
 import { consumeEventWarning } from './event-log.mjs';
@@ -37,6 +38,8 @@ Usage:
   idefactory attempt show <attemptId> [--path dir]
   idefactory verify run <attemptId> --check <kind> [--red]
   idefactory verify import <attemptId> --file <path>
+  idefactory red reuse <targetAttemptId> --from <sourceAttemptId> --kind <kind>... --note "text" --approver <id> [--principal-provider <id> --principal-subject <id>] [--path dir]
+  idefactory red waive <targetAttemptId> --kind <kind>... --note "text" --approver <id> [--acknowledge-not-stuck] [--principal-provider <id> --principal-subject <id>] [--path dir]
   idefactory complete <change> <taskId> --attempt <id> [--path dir]
   idefactory pr open <change> [--path dir]
   idefactory pr comment <attemptId> [--path dir]
@@ -168,6 +171,8 @@ async function dispatchCommand(cmd, ctx) {
       return handleAttempt(project, parsed, env, out);
     case 'verify':
       return await handleVerify(project, parsed, out);
+    case 'red':
+      return handleRed(project, parsed, out);
     case 'complete': {
       const [change, taskId] = parsed.rest;
       const attemptId = parsed.flags.attempt;
@@ -376,6 +381,62 @@ async function handleVerify(project, parsed, out) {
     'Usage: idefactory verify run <attemptId> --check <kind> [--red]\n'
     + '       idefactory verify import <attemptId> --file <path>',
   );
+}
+
+const REUSE_USAGE = 'Usage: idefactory red reuse <targetAttemptId> --from <sourceAttemptId> --kind <kind>... --note "text" --approver <id>';
+const WAIVE_USAGE = 'Usage: idefactory red waive <targetAttemptId> --kind <kind>... --note "text" --approver <id> [--acknowledge-not-stuck]';
+const EXCEPTION_NEW_RUN_NOTE = 'A closed vacuous-red or retry-cap run session stays closed until the human passes --new-run.';
+
+function stringFlag(flags, key) {
+  return typeof flags[key] === 'string' && flags[key].length > 0 ? flags[key] : '';
+}
+
+function handleRed(project, parsed, out) {
+  if (halted(project)) {
+    throw new Error('HALT file present. Factory commands are stopped. Remove it with idefactory resume.');
+  }
+  const sub = parsed.rest[0];
+  if (sub !== 'reuse' && sub !== 'waive') {
+    throw new Error(`${REUSE_USAGE}\n       ${WAIVE_USAGE}`);
+  }
+  const usage = sub === 'reuse' ? REUSE_USAGE : WAIVE_USAGE;
+  const targetAttemptId = parsed.rest[1];
+  const kinds = (parsed.sequence || [])
+    .filter((entry) => entry.key === 'kind' && typeof entry.value === 'string')
+    .map((entry) => entry.value);
+  const reason = stringFlag(parsed.flags, 'note');
+  const approver = stringFlag(parsed.flags, 'approver');
+  const sourceAttemptId = stringFlag(parsed.flags, 'from');
+  if (!targetAttemptId || kinds.length === 0 || !reason || !approver
+    || (sub === 'reuse' && !sourceAttemptId)) {
+    throw new Error(usage);
+  }
+  const common = {
+    targetAttemptId,
+    kinds,
+    approver,
+    reason,
+    principalProvider: stringFlag(parsed.flags, 'principal-provider') || undefined,
+    principalSubject: stringFlag(parsed.flags, 'principal-subject') || undefined,
+  };
+  const result = sub === 'reuse'
+    ? reuseRed(project, { ...common, sourceAttemptId })
+    : waiveRed(project, {
+      ...common,
+      acknowledgeNotStuck: Boolean(parsed.flags['acknowledge-not-stuck']),
+    });
+  out(JSON.stringify({
+    attemptId: targetAttemptId,
+    exceptions: result.records.map((record, index) => ({
+      id: record.id,
+      type: record.type,
+      kind: record.kind,
+      file: path.relative(project, result.files[index]),
+      ...(record.type === 'waiver' ? { acknowledgedNotStuck: record.acknowledgedNotStuck } : {}),
+    })),
+    note: EXCEPTION_NEW_RUN_NOTE,
+  }, null, 2));
+  return 0;
 }
 
 function reportDoctor(project, out, err) {
