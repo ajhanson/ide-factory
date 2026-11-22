@@ -12,7 +12,8 @@ import {
   requiresSecurityStage,
 } from './risk-gates.mjs';
 import { getWorkItem, updateWorkItem } from './work.mjs';
-import { hasAnyFailingRed, isFailingRed, redForKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
+import { hasAnyFailingRed, requiredTestKinds, retryKey } from './red-evidence.mjs';
+import { redSatisfaction } from './red-exceptions.mjs';
 
 export const ATTEMPT_STATES = [
   'planned',
@@ -182,7 +183,7 @@ function securityReviewerIdFrom(evidence) {
 
 function rejectCallerSuppliedCheckResults(evidence) {
   if (!evidence || typeof evidence !== 'object') return;
-  for (const key of ['red', 'verification', 'security']) {
+  for (const key of ['red', 'verification', 'security', 'redExceptions', 'redException']) {
     if (Object.prototype.hasOwnProperty.call(evidence, key)) {
       throw new Error(
         `attempt transition rejects caller-supplied ${key} check results; use idefactory verify run`,
@@ -203,9 +204,12 @@ function validateEvidence(project, attempt, nextState, evidence) {
     const item = getWorkItem(project, attempt.change, attempt.taskId);
     const taskType = item?.factory?.taskType === 'lightweight' ? 'lightweight' : 'code';
     if (taskType !== 'lightweight') {
-      const missing = requiredTestKinds(item?.factory?.checks).filter((kind) => !isFailingRed(redForKind(attempt, kind)));
+      const missing = requiredTestKinds(item?.factory?.checks)
+        .filter((kind) => redSatisfaction(project, attempt, kind) === 'missing');
       if (missing.length) {
-        throw new Error(`verifying requires a recorded failing CLI red for: ${missing.join(', ')}`);
+        throw new Error(
+          `verifying requires a recorded failing CLI red for: ${missing.join(', ')} (or a red exception)`,
+        );
       }
     }
   }

@@ -28,7 +28,7 @@ Alternative considered: `approve --action reuse-red`. Rejected because the token
 
 ### One resolver for red
 
-`red-evidence.mjs` gains `redSatisfaction(project, attempt, kind)` returning `cli`, `reuse`, `waiver`, or `missing`. `cli` keeps today's `isFailingRed(redForKind(...))`. `reuse` and `waiver` read `attempt.evidence.redExceptions[kind]`, load the record file, and require matching `attemptId`, `kind`, `type`, and file digest. The `verifying` gate and `complete` call it; `isFailingRed` and `hasAnyFailingRed` are untouched, so `red-confirmed` still needs a genuine CLI red.
+`red-exceptions.mjs` (not `red-evidence.mjs`, which `verification-evidence.mjs` imports) exports `redSatisfaction(project, attempt, kind)` returning `cli`, `reuse`, `waiver`, or `missing`. `cli` keeps today's `isFailingRed(redForKind(...))`. `reuse` and `waiver` read `attempt.evidence.redExceptions[kind]`, load the record file, and require matching `attemptId`, `kind`, `type`, and file digest. The `verifying` gate and `complete` call it; `isFailingRed` and `hasAnyFailingRed` are untouched, so `red-confirmed` still needs a genuine CLI red.
 
 An exception that fails any check returns `missing`, so a deleted or edited file reads as no red.
 
