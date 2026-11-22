@@ -1,9 +1,18 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { attemptPath, getAttempt } from './attempt.mjs';
-import { writeText } from './layout.mjs';
-import { isFailingRed, redForKind } from './red-evidence.mjs';
+import { attestationFailureReason } from './complete.mjs';
+import { readPolicyVersion } from './principal.mjs';
+import { readText, writeText } from './layout.mjs';
+import { isFailingRed, redForKind, requiredTestKinds } from './red-evidence.mjs';
+import {
+  canonicalJson,
+  commandDigest,
+  resolveGitBinding,
+  validateCheckRecord,
+} from './verification-evidence.mjs';
+import { getWorkItem } from './work.mjs';
 
 export const EXCEPTION_TYPES = ['reuse', 'waiver'];
 
@@ -132,4 +141,192 @@ export function redSatisfaction(project, attempt, kind) {
   if (isFailingRed(redForKind(attempt, kind))) return 'cli';
   const record = readBoundException(project, attempt, kind);
   return record ? record.type : 'missing';
+}
+
+const PRE_VERIFYING_STATES = ['planned', 'assigned', 'implementing', 'red-confirmed'];
+
+function loadAttempts(project, targetAttemptId, sourceAttemptId) {
+  const target = getAttempt(project, targetAttemptId);
+  if (!target) throw new Error(`Attempt not found: ${targetAttemptId}`);
+  const source = getAttempt(project, sourceAttemptId);
+  if (!source) throw new Error(`Attempt not found: ${sourceAttemptId}`);
+  if (source.id === target.id) {
+    throw new Error('reuse requires a source attempt different from the target attempt');
+  }
+  return { target, source };
+}
+
+function requireText(value, label) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} is required`);
+  }
+  return value.trim();
+}
+
+function requireBeforeVerifying(target) {
+  if (!PRE_VERIFYING_STATES.includes(target.state)) {
+    throw new Error(
+      `red exceptions apply only before verifying (target state=${target.state})`,
+    );
+  }
+}
+
+function requireCodeItem(project, attempt, kinds) {
+  const item = getWorkItem(project, attempt.change, attempt.taskId);
+  if (!item) throw new Error(`Work item not found: ${attempt.change}/${attempt.taskId}`);
+  if (item.factory?.taskType === 'lightweight') {
+    throw new Error('red exceptions do not apply to a lightweight work item');
+  }
+  const required = requiredTestKinds(item.factory?.checks);
+  for (const kind of kinds) {
+    if (!required.includes(kind)) {
+      throw new Error(`${kind} is not a required test kind of ${attempt.change}/${attempt.taskId}`);
+    }
+  }
+  return item;
+}
+
+function registryDigestFor(project, kind) {
+  const file = path.join(project, '.factory', 'checks.json');
+  if (!fs.existsSync(file)) throw new Error('missing check registry: .factory/checks.json');
+  let registry;
+  try {
+    registry = JSON.parse(readText(file));
+  } catch {
+    throw new Error('invalid check registry JSON');
+  }
+  const argv = registry?.checks?.[kind]?.argv;
+  if (!Array.isArray(argv) || argv.length === 0) {
+    throw new Error(`Check kind has no argv mapping: ${kind}`);
+  }
+  return commandDigest(argv);
+}
+
+function passingTargetRecord(attempt, kind, { registryDigest, headSha }) {
+  for (const record of attempt.evidence?.verification || []) {
+    if (record.kind !== kind || record.issuer !== 'cli') continue;
+    try {
+      validateCheckRecord(record);
+    } catch {
+      continue;
+    }
+    if (!attestationFailureReason(record, { attemptId: attempt.id, registryDigest, headSha })) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function newExceptionId() {
+  return `red-${randomUUID()}`;
+}
+
+/**
+ * Record a reuse exception on a replacement attempt for each named kind.
+ * Validates every kind before writing anything.
+ *
+ * @param {string} project
+ * @param {{
+ *   targetAttemptId: string,
+ *   sourceAttemptId: string,
+ *   kinds: string[],
+ *   approver: string,
+ *   reason: string,
+ *   principal?: object,
+ * }} options
+ * @returns {{ records: object[], files: string[] }}
+ */
+export function reuseRed(project, options) {
+  const kinds = [...new Set(options.kinds || [])];
+  if (kinds.length === 0) throw new Error('reuse requires at least one --kind');
+  const approver = requireText(options.approver, 'approver');
+  const reason = requireText(options.reason, 'reason');
+  const { target, source } = loadAttempts(project, options.targetAttemptId, options.sourceAttemptId);
+
+  if (source.change !== target.change || source.taskId !== target.taskId) {
+    throw new Error('reuse requires source and target attempts for the same change and task');
+  }
+  if (source.state !== 'rejected') {
+    throw new Error(`reuse requires a rejected source attempt (state=${source.state})`);
+  }
+  if (String(source.createdAt || '') >= String(target.createdAt || '')) {
+    throw new Error('reuse requires a source attempt created before the target attempt');
+  }
+  requireBeforeVerifying(target);
+  requireCodeItem(project, target, kinds);
+
+  const sourceReds = {};
+  for (const kind of kinds) {
+    if (target.evidence?.redExceptions?.[kind]) {
+      throw new Error(`attempt already has an exception for ${kind}`);
+    }
+    const red = redForKind(source, kind);
+    if (!isFailingRed(red) || red.attemptId !== source.id) {
+      throw new Error(`source attempt has no failing CLI red for ${kind}`);
+    }
+    try {
+      validateCheckRecord(red);
+    } catch {
+      throw new Error(`source attempt has no failing CLI red for ${kind}`);
+    }
+    const registryDigest = registryDigestFor(project, kind);
+    if (red.commandDigest !== registryDigest) {
+      throw new Error(
+        `source red command digest for ${kind} does not match the current registry argv`,
+      );
+    }
+    sourceReds[kind] = { red, registryDigest };
+  }
+
+  const { sourceRevision: headSha, worktreeClean } = resolveGitBinding(project);
+  if (!headSha || !worktreeClean) {
+    throw new Error('reuse requires a clean worktree at a resolvable HEAD');
+  }
+  for (const kind of kinds) {
+    const green = passingTargetRecord(target, kind, {
+      registryDigest: sourceReds[kind].registryDigest,
+      headSha,
+    });
+    if (!green) {
+      throw new Error(
+        `reuse requires a passing CLI verification for ${kind} on the target attempt at the current clean HEAD`,
+      );
+    }
+  }
+
+  const issuance = new Date().toISOString();
+  const policyVersion = readPolicyVersion(project);
+  const records = [];
+  const files = [];
+  for (const kind of kinds) {
+    const { red } = sourceReds[kind];
+    const record = {
+      schemaVersion: 1,
+      id: newExceptionId(),
+      type: 'reuse',
+      change: target.change,
+      task: target.taskId,
+      attemptId: target.id,
+      kind,
+      approver,
+      reason,
+      issuance,
+      policyVersion,
+      sourceRevision: headSha,
+      ...(options.principal ? { principal: options.principal } : {}),
+      source: {
+        attemptId: source.id,
+        commandDigest: red.commandDigest,
+        logDigest: red.logDigest ?? null,
+        sourceRevision: red.sourceRevision ?? null,
+        startedAt: red.startedAt ?? null,
+        finishedAt: red.finishedAt ?? null,
+        recordDigest: digestText(canonicalJson(red)),
+      },
+    };
+    const bound = bindRedException(project, target.id, record);
+    records.push(record);
+    files.push(bound.file);
+  }
+  return { records, files };
 }

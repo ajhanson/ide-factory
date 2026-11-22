@@ -275,7 +275,7 @@ function assertChecksPassed(project, attempt, required, options = {}) {
  * Return null when the record passes from attestation facts.
  * Ignores any caller-supplied `passed` boolean.
  */
-function attestationFailureReason(record, { attemptId, registryDigest, headSha }) {
+export function attestationFailureReason(record, { attemptId, registryDigest, headSha }) {
   if (record.issuer !== 'cli' && record.issuer !== 'import') {
     return 'verification-command attestation requires issuer cli or import';
   }

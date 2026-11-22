@@ -7,8 +7,8 @@
 
 ## 2. Reuse command
 
-- [ ] 2.1 Add failing tests for the `reuse` rules: eligible reuse writes one exception and leaves the source attempt file byte-identical; refusal, with nothing written, for a source not `rejected`, a source with no failing CLI red for the kind, a different change or task, a `lightweight` target, a target already in `verifying`, a changed registry command digest, a dirty worktree, and a target with no passing CLI record for the kind at the current clean HEAD. Implement `reuseRed` in `src/lib/red-exceptions.mjs`, exporting `attestationFailureReason` from `src/lib/complete.mjs` for the green check. Verify with `node --test test/red-exceptions.test.mjs`.
-- [ ] 2.2 Add failing tests that the reuse record contains the source attempt id, command digest, log digest, source revision, start and finish times, the digest of the whole source record, the HEAD at authorization, the approver, the reason, the issuance time, and the policy version, and that it has no `exitCode`. Implement the record. Verify with `node --test test/red-exceptions.test.mjs`.
+- [x] 2.1 Add failing tests for the `reuse` rules: eligible reuse writes one exception and leaves the source attempt file byte-identical; refusal, with nothing written, for a source not `rejected`, a source with no failing CLI red for the kind, a different change or task, a `lightweight` target, a target already in `verifying`, a changed registry command digest, a dirty worktree, and a target with no passing CLI record for the kind at the current clean HEAD. Implement `reuseRed` in `src/lib/red-exceptions.mjs`, exporting `attestationFailureReason` from `src/lib/complete.mjs` for the green check. Verify with `node --test test/red-exceptions.test.mjs`.
+- [x] 2.2 Add failing tests that the reuse record contains the source attempt id, command digest, log digest, source revision, start and finish times, the digest of the whole source record, the HEAD at authorization, the approver, the reason, the issuance time, and the policy version, and that it has no `exitCode`. Implement the record. Verify with `node --test test/red-exceptions.test.mjs`.
 
 ## 3. Waiver override and warning
 

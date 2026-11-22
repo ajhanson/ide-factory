@@ -8,6 +8,7 @@ import {
   bindRedException,
   exceptionFilePath,
   redSatisfaction,
+  reuseRed,
 } from '../src/lib/red-exceptions.mjs';
 import { resolveGitBinding } from '../src/lib/verification-evidence.mjs';
 import { cleanup, idefactory, tempProject } from './helpers.mjs';
@@ -399,6 +400,274 @@ test('complete still rejects a code attempt with neither a red nor an exception'
     const done = await idefactory(dir, ['complete', 'demo', '1.1', '--attempt', started.id]);
     assert.notEqual(done.code, 0);
     assert.match(done.err, /complete requires a recorded failing CLI red/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+const FLAG_REGISTRY = {
+  schemaVersion: 1,
+  checks: {
+    unit: {
+      argv: [process.execPath, '-e', "process.exit(require('fs').existsSync('fixed.flag') ? 0 : 1)"],
+      cwdPolicy: 'project',
+      timeoutMs: 30_000,
+      artifacts: [],
+    },
+  },
+};
+
+function writeFlagRegistry(dir) {
+  fs.writeFileSync(path.join(dir, '.factory/checks.json'), `${JSON.stringify(FLAG_REGISTRY, null, 2)}\n`);
+}
+
+/** Attempt A: genuine CLI red, then rejected by a reviewer. */
+async function rejectedSource(dir) {
+  const first = await seedAttempt(dir);
+  writeFlagRegistry(dir);
+  ensureCleanGitCommit(dir);
+  await toImplementing(dir, first.id, 'engineer-1');
+  const red = await idefactory(dir, ['verify', 'run', first.id, '--check', 'unit', '--red']);
+  assert.equal(red.code, 0, red.err + red.out);
+  assert.equal((await transition(dir, first.id, 'verifying')).code, 0);
+  assert.equal((await transition(dir, first.id, 'awaiting-review')).code, 0);
+  const rejected = await transition(dir, first.id, 'rejected', {
+    reviewerId: 'reviewer-1',
+    notes: 'attestation recorded on a dirty workspace',
+  });
+  assert.equal(rejected.code, 0, rejected.err);
+  return getAttempt(dir, first.id);
+}
+
+/** Attempt B: replacement that is already green on a clean HEAD. */
+async function greenTarget(dir, { pass = true } = {}) {
+  const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+  assert.equal(started.code, 0, started.err);
+  const target = JSON.parse(started.out);
+  await toImplementing(dir, target.id, 'engineer-2');
+  fs.writeFileSync(path.join(dir, 'fixed.flag'), 'fixed\n');
+  ensureCleanGitCommit(dir);
+  if (pass) {
+    const result = await idefactory(dir, ['verify', 'run', target.id, '--check', 'unit']);
+    assert.equal(result.code, 0, result.err + result.out);
+  }
+  return getAttempt(dir, target.id);
+}
+
+function reuseOptions(source, target, overrides = {}) {
+  return {
+    targetAttemptId: target.id,
+    sourceAttemptId: source.id,
+    kinds: ['unit'],
+    approver: 'human-1',
+    reason: 'dirty-workspace rejection only',
+    ...overrides,
+  };
+}
+
+function fileBytes(file) {
+  return fs.readFileSync(file, 'utf8');
+}
+
+test('eligible reuse records one exception and leaves the source attempt unchanged', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const sourceBefore = fileBytes(attemptPath(dir, source.id));
+    const result = reuseRed(dir, reuseOptions(source, target));
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].type, 'reuse');
+    const stored = getAttempt(dir, target.id);
+    assert.equal(redSatisfaction(dir, stored, 'unit'), 'reuse');
+    assert.equal(stored.evidence.reds ?? null, null);
+    assert.equal(fileBytes(attemptPath(dir, source.id)), sourceBefore);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+async function assertReuseRefused(dir, source, target, options, pattern) {
+  const targetBefore = fileBytes(attemptPath(dir, target.id));
+  assert.throws(() => reuseRed(dir, options), pattern);
+  assert.equal(fileBytes(attemptPath(dir, target.id)), targetBefore);
+  const exceptionsDir = path.join(dir, '.factory/exceptions/red');
+  assert.equal(fs.existsSync(exceptionsDir) ? fs.readdirSync(exceptionsDir).length : 0, 0);
+}
+
+test('reuse refuses a source that is not rejected', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const file = attemptPath(dir, source.id);
+    const edited = JSON.parse(fileBytes(file));
+    edited.state = 'verifying';
+    fs.writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /rejected/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses a source with no genuine red for the kind', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const file = attemptPath(dir, source.id);
+    const edited = JSON.parse(fileBytes(file));
+    delete edited.evidence.reds;
+    fs.writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /failing CLI red/);
+
+    const forged = JSON.parse(fileBytes(file));
+    forged.evidence.reds = { unit: { kind: 'unit', issuer: 'import', exitCode: 1, attemptId: source.id } };
+    fs.writeFileSync(file, `${JSON.stringify(forged, null, 2)}\n`);
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /failing CLI red/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses a different task, a lightweight target, and a target already verifying', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+
+    const targetFile = attemptPath(dir, target.id);
+    const original = fileBytes(targetFile);
+    const other = JSON.parse(original);
+    other.taskId = '9.9';
+    fs.writeFileSync(targetFile, `${JSON.stringify(other, null, 2)}\n`);
+    await assertReuseRefused(dir, source, getAttempt(dir, target.id), reuseOptions(source, target), /same change and task/);
+    fs.writeFileSync(targetFile, original);
+
+    const verifying = JSON.parse(original);
+    verifying.state = 'verifying';
+    fs.writeFileSync(targetFile, `${JSON.stringify(verifying, null, 2)}\n`);
+    await assertReuseRefused(dir, source, getAttempt(dir, target.id), reuseOptions(source, target), /before verifying/);
+    fs.writeFileSync(targetFile, original);
+
+    const itemFile = path.join(dir, '.factory/work/items/demo--1.1.json');
+    const item = JSON.parse(fileBytes(itemFile));
+    item.factory.taskType = 'lightweight';
+    fs.writeFileSync(itemFile, `${JSON.stringify(item, null, 2)}\n`);
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /lightweight/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses a kind the work item does not require', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    await assertReuseRefused(
+      dir,
+      source,
+      target,
+      reuseOptions(source, target, { kinds: ['integration'] }),
+      /required test kind/,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses a target that is not green on the current clean HEAD', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const notGreen = await greenTarget(dir, { pass: false });
+    await assertReuseRefused(dir, source, notGreen, reuseOptions(source, notGreen), /passing CLI verification/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses a stale pass after HEAD moves', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    fs.writeFileSync(path.join(dir, 'later.txt'), 'later\n');
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-m', 'move head']);
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /passing CLI verification/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses when the registered command changed since the red', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const registry = JSON.parse(fileBytes(path.join(dir, '.factory/checks.json')));
+    registry.checks.unit.argv = [process.execPath, '-e', 'process.exit(0)'];
+    fs.writeFileSync(path.join(dir, '.factory/checks.json'), `${JSON.stringify(registry, null, 2)}\n`);
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /command digest/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses a dirty worktree', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    fs.writeFileSync(path.join(dir, 'product.js'), 'dirty\n');
+    await assertReuseRefused(dir, source, target, reuseOptions(source, target), /clean worktree/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse refuses an unknown or identical attempt', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    assert.throws(() => reuseRed(dir, reuseOptions(source, target, { sourceAttemptId: 'nope' })), /not found/);
+    assert.throws(() => reuseRed(dir, reuseOptions(source, target, { sourceAttemptId: target.id })), /different/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('reuse provenance names the source attempt and its red without claiming a run', async () => {
+  const dir = tempProject();
+  try {
+    const source = await rejectedSource(dir);
+    const target = await greenTarget(dir);
+    const { files } = reuseRed(dir, reuseOptions(source, target));
+    const record = JSON.parse(fileBytes(files[0]));
+    const red = source.evidence.reds.unit;
+    assert.equal(record.type, 'reuse');
+    assert.equal(record.attemptId, target.id);
+    assert.equal(record.change, 'demo');
+    assert.equal(record.task, '1.1');
+    assert.equal(record.kind, 'unit');
+    assert.equal(record.approver, 'human-1');
+    assert.equal(record.reason, 'dirty-workspace rejection only');
+    assert.equal(record.policyVersion, 1);
+    assert.match(record.issuance, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(record.sourceRevision, git(dir, ['rev-parse', 'HEAD']));
+    assert.equal(record.source.attemptId, source.id);
+    assert.equal(record.source.commandDigest, red.commandDigest);
+    assert.equal(record.source.logDigest, red.logDigest);
+    assert.equal(record.source.sourceRevision, red.sourceRevision);
+    assert.equal(record.source.startedAt, red.startedAt);
+    assert.equal(record.source.finishedAt, red.finishedAt);
+    assert.match(record.source.recordDigest, /^sha256:[0-9a-f]{64}$/);
+    assert.equal('exitCode' in record, false);
+    assert.equal('issuer' in record, false);
+    assert.equal(getAttempt(dir, target.id).evidence.reds ?? null, null);
   } finally {
     cleanup(dir);
   }
