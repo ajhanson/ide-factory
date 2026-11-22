@@ -28,7 +28,7 @@
 
 ## 6. Skills and documentation
 
-- [ ] 6.1 Add a failing skill-text test over `templates/skills` and every shipped IDE copy of factory-build, factory-tdd, and factory-verify asserting they name `idefactory red reuse` and `idefactory red waive`, tell the session to ask the human first, warn that a waiver before the system is stuck is discouraged, and pass `--acknowledge-not-stuck` only after the human acknowledges, using the same warning wording as the CLI. Update the templates and each copy. Verify with `node --test test/verification-evidence.test.mjs test/install.test.mjs`.
+- [x] 6.1 Add a failing skill-text test over `templates/skills` and every shipped IDE copy of factory-build, factory-tdd, and factory-verify asserting they name `idefactory red reuse` and `idefactory red waive`, tell the session to ask the human first, warn that a waiver before the system is stuck is discouraged, and pass `--acknowledge-not-stuck` only after the human acknowledges, using the same warning wording as the CLI. Update the templates and each copy. Verify with `node --test test/verification-evidence.test.mjs test/install.test.mjs`.
 - [ ] 6.2 Document `red reuse`, `red waive`, the stuck-first recommendation, and the `--acknowledge-not-stuck` flag in the README usage section and in `templates/factory/governance.md`, and verify the documented commands appear in `node src/cli.mjs --help` output and that `node --test test/readme-approve-example.test.mjs test/install.test.mjs` passes.
 
 ## 7. Integration

@@ -36,6 +36,15 @@ Run verification profile checks before claiming done. Follow `factory-verify`.
 
 If the command fails, follow `systematic-debugging` when that skill is installed, otherwise `factory-debug`.
 
+## Red exceptions
+
+When a replacement attempt starts with no red and `idefactory verify run <attemptId> --check <kind> --red` stops with `vacuous-red` because the implementation already passes, do not fake a red. Ask the human first, then use one of these:
+
+- `idefactory red reuse <targetAttemptId> --from <sourceAttemptId> --kind <kind> --note "reason" --approver <human>` reuses the genuine red of a rejected earlier attempt for the same task. Run it on a clean HEAD after a passing `verify run` on that HEAD.
+- `idefactory red waive <targetAttemptId> --kind <kind> --note "reason" --approver <human>` waives the red. Waiving a red before the system is stuck is discouraged. The command refuses until the attempt has hit `vacuous-red` for that kind. Warn the human, recommend reuse or waiting until the system is stuck, and pass `--acknowledge-not-stuck` only after the human acknowledges the warning and chooses to proceed.
+
+Neither command claims a red ran. The record names the approver and reason, and the reviewer sees it. Clean-revision verification, independent review, and lockouts still apply.
+
 ## Review
 
 Review is a different role: the reviewer. The implementer does not approve their own work.

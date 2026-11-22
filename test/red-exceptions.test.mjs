@@ -1351,3 +1351,19 @@ test('the verdict comment names the exception when the attempt has one', async (
     cleanup(dir);
   }
 });
+
+test('every shipped copy of the build skills documents the red exception commands', () => {
+  for (const dir of ['templates', '.cursor', '.claude', '.cline', '.github', '.agents']) {
+    for (const name of ['factory-build', 'factory-tdd', 'factory-verify']) {
+      const skill = fs.readFileSync(path.join(repoRoot, dir, 'skills', name, 'SKILL.md'), 'utf8');
+      const label = `${dir}/${name}`;
+      assert.match(skill, /idefactory red reuse/, label);
+      assert.match(skill, /idefactory red waive/, label);
+      assert.match(skill, /ask the human first/i, label);
+      assert.ok(skill.includes(WAIVER_WARNING_SENTENCE), `${label} warning sentence`);
+      assert.match(skill, /--acknowledge-not-stuck/, label);
+      assert.match(skill, /only after the human acknowledges/i, label);
+      assert.match(skill, /vacuous-red/, label);
+    }
+  }
+});
