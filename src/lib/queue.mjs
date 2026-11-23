@@ -396,7 +396,7 @@ ${prior}
 Method:
 - Prefer common scaffolds and libraries over hand-rolled toolchains (for example npm create vite@latest for a SPA).
 - Write a failing test before production code when the profile includes unit or equivalent checks.
-- Record evidence on the attempt via idefactory attempt transition.
+- Record evidence on the attempt via idefactory attempt transition. Pass JSON evidence with --evidence-file <path> to a temporary file outside the project, or --evidence <json> inline, never both.
 - Run verification profile checks before claiming done.
 - Review is a different role: reviewer. The implementer does not approve their own work.
 - Finalize with idefactory complete ${item.change} ${item.id} --attempt <id>.

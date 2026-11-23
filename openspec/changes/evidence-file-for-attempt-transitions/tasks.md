@@ -11,7 +11,7 @@
 
 ## 3. Packet, skills, and docs
 
-- [ ] 3.1 Add a failing packet test in `test/queue.test.mjs` that the engineer packet names `idefactory attempt transition` and `--evidence-file`. Update the packet method line in `src/lib/queue.mjs`. Verify with `node --test test/queue.test.mjs`.
+- [x] 3.1 Add a failing packet test in `test/queue.test.mjs` that the engineer packet names `idefactory attempt transition` and `--evidence-file`. Update the packet method line in `src/lib/queue.mjs`. Verify with `node --test test/queue.test.mjs`.
 - [ ] 3.2 Add a failing skill-text test in `test/evidence-file.test.mjs` over `templates/skills` and the `.cursor`, `.claude`, `.cline`, `.github`, and `.agents` skill copies of factory-build and factory-run. Each must name `--evidence-file`, name `--evidence` as the inline alternative with only one allowed, tell the session to create the file in the operating system temporary directory and not inside the project, and tell it to remove the file after the command whether it succeeds or fails. Update `templates/skills` and copy the files to every shipped IDE directory. Verify with `node --test test/evidence-file.test.mjs test/install.test.mjs`.
 - [ ] 3.3 Document `--evidence-file`, the single-source rule, the encodings accepted, and a PowerShell example that writes a temporary file, runs the transition, and removes the file, in the README commands or usage section. Add a failing test that the README and `node src/cli.mjs --help` name both flags, then make it pass. Verify with `node --test test/evidence-file.test.mjs test/readme-approve-example.test.mjs test/install.test.mjs`.
 
