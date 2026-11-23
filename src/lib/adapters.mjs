@@ -229,6 +229,104 @@ export function classify({ local, rendering, baseline = null, history = [], pinn
   return { status: 'preserved' };
 }
 
+function indexesOf(text, needle) {
+  const out = [];
+  let at = text.indexOf(needle);
+  while (at !== -1) {
+    out.push(at);
+    at = text.indexOf(needle, at + needle.length);
+  }
+  return out;
+}
+
+function locateSection(text) {
+  const starts = indexesOf(text, SECTION_START);
+  const ends = indexesOf(text, SECTION_END);
+  if (starts.length === 0 && ends.length === 0) return { kind: 'none' };
+  if (starts.length !== 1 || ends.length !== 1) {
+    return {
+      kind: 'malformed',
+      reason: `expected one ${SECTION_START} and one ${SECTION_END} marker, found ${starts.length} and ${ends.length}`,
+    };
+  }
+  if (ends[0] < starts[0]) {
+    return { kind: 'malformed', reason: 'the end marker comes before the start marker' };
+  }
+  return { kind: 'one', start: starts[0], end: ends[0] + SECTION_END.length };
+}
+
+/** CRLF only when every line break in the text is CRLF. */
+export function detectEol(text) {
+  return /\r\n/.test(text) && !/(^|[^\r])\n/.test(text) ? '\r\n' : '\n';
+}
+
+function withEol(text, eol) {
+  const lf = text.replace(/\r\n/g, '\n');
+  return eol === '\n' ? lf : lf.replace(/\n/g, eol);
+}
+
+function planSection(project, item, manifest, history) {
+  const local = readLocal(path.join(project, item.path));
+  const recorded = manifest.files[item.key] || {};
+  const rendering = digest(item.content);
+  const base = {
+    key: item.key,
+    path: item.path,
+    scope: item.scope,
+    kind: item.kind,
+    name: item.name,
+    content: item.content,
+    rendering,
+    baseline: recorded.digest || null,
+    local: null,
+    localText: null,
+  };
+  if (!local.exists) return { ...base, status: 'create', mode: 'file' };
+  if (!local.regular) return { ...base, status: 'preserved', reason: 'not a regular file', mode: 'none' };
+  const found = locateSection(local.text);
+  if (found.kind === 'malformed') {
+    return { ...base, status: 'malformed', reason: found.reason, localText: local.text, mode: 'none' };
+  }
+  if (found.kind === 'none') {
+    return { ...base, status: 'create', mode: 'append', localText: local.text };
+  }
+  const localDigest = digest(`${local.text.slice(found.start, found.end)}\n`);
+  const result = classify({
+    local: localDigest,
+    rendering,
+    baseline: base.baseline,
+    history: history.files[item.key] || [],
+    pinned: Boolean(recorded.pinned),
+  });
+  return {
+    ...base,
+    ...result,
+    local: localDigest,
+    localText: local.text,
+    mode: 'replace',
+    range: [found.start, found.end],
+  };
+}
+
+/**
+ * The full file text after writing this section item. Only the marked block changes.
+ * @param {object} item a planned section item
+ * @returns {string}
+ */
+export function renderSectionInto(item) {
+  if (item.status === 'malformed') {
+    throw new Error(`${item.path} is malformed: ${item.reason}`);
+  }
+  if (item.mode === 'file') return item.content;
+  const eol = detectEol(item.localText);
+  if (item.mode === 'append') {
+    return `${item.localText.replace(/\s*$/, '')}${eol}${eol}${withEol(item.content, eol)}`;
+  }
+  const [start, end] = item.range;
+  const block = withEol(item.content.replace(/\n$/, ''), eol);
+  return `${item.localText.slice(0, start)}${block}${item.localText.slice(end)}`;
+}
+
 export function historyPath() {
   return path.join(templatesRoot, 'adapter-history.json');
 }
@@ -293,7 +391,9 @@ export function planAdapters(project, options = {}) {
   const entries = renderAdapters(project, { templates: options.templates });
   const files = [];
   for (const item of entries) {
-    if (item.scope === 'file') files.push(planFile(project, item, manifest, history));
+    files.push(item.scope === 'file'
+      ? planFile(project, item, manifest, history)
+      : planSection(project, item, manifest, history));
   }
   return { files, orphans: [], manifest };
 }

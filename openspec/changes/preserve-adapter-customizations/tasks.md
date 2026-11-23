@@ -18,7 +18,7 @@
 
 ## 4. Instruction sections and orphans
 
-- [ ] 4.1 Add failing tests for the section planner in `test/adapters-plan.test.mjs`: a missing file is created; a file with no markers gets the block appended; a clean unmodified section is `update` and only the block bytes change; an edited section is `preserved`; a start marker without an end, a reversed pair, and a repeated pair are `malformed` and are never changed; and a CRLF file keeps its line endings after an update. Implement the section planning and apply support. Verify with `node --test test/adapters-plan.test.mjs`.
+- [x] 4.1 Add failing tests for the section planner in `test/adapters-plan.test.mjs`: a missing file is created; a file with no markers gets the block appended; a clean unmodified section is `update` and only the block bytes change; an edited section is `preserved`; a start marker without an end, a reversed pair, and a repeated pair are `malformed` and are never changed; and a CRLF file keeps its line endings after an update. Implement the section planning and apply support. Verify with `node --test test/adapters-plan.test.mjs`.
 - [ ] 4.2 Add failing tests that a manifest path or a history path that is no longer rendered is `orphan` when the file exists, is never deleted, and has its manifest entry dropped when the file is gone. Implement orphan detection. Verify with `node --test test/adapters-plan.test.mjs`.
 
 ## 5. Apply, report, and exit code

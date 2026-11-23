@@ -10,6 +10,7 @@ import {
   planAdapters,
   readManifest,
   renderAdapters,
+  renderSectionInto,
   writeManifest,
 } from '../src/lib/adapters.mjs';
 import { cleanup, repoRoot, tempProject } from './helpers.mjs';
@@ -296,6 +297,135 @@ test('planAdapters never lists or touches unrelated files and writes nothing', (
     const keys = plan.files.map((item) => item.key);
     assert.ok(!keys.includes('.cursor/skills/team-skill/SKILL.md'));
     assert.ok(!keys.includes('.cline/rules/team-style.md'));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function sectionTemplates() {
+  const templates = fs.mkdtempSync(path.join(os.tmpdir(), 'idefactory-templates-'));
+  fs.cpSync(path.join(repoRoot, 'templates'), templates, { recursive: true });
+  fs.appendFileSync(path.join(templates, 'fragments/instructions.md'), '\nNEW SECTION LINE\n');
+  return templates;
+}
+
+function sectionItem(plan, file = 'AGENTS.md') {
+  return plan.files.find((item) => item.key === `${file}#section`);
+}
+
+function oldBlock(dir) {
+  return renderAdapters(dir).find((item) => item.key === 'AGENTS.md#section').content;
+}
+
+function oldHistory(dir) {
+  return historyOf(renderAdapters(dir));
+}
+
+test('section: a missing file is created from the block alone', () => {
+  const dir = tempProject();
+  try {
+    const item = sectionItem(planAdapters(dir));
+    assert.equal(item.status, 'create');
+    assert.equal(renderSectionInto(item), item.content);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('section: a file with no markers gets the block appended after the project text', () => {
+  const dir = tempProject();
+  try {
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Project\n\nOur rules.\n');
+    const item = sectionItem(planAdapters(dir));
+    assert.equal(item.status, 'create');
+    assert.equal(renderSectionInto(item), `# Project\n\nOur rules.\n\n${item.content}`);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('section: an unmodified section is updated and only the block bytes change', () => {
+  const dir = tempProject();
+  const templates = sectionTemplates();
+  try {
+    const before = '# Project\n\nIntro.\n\n';
+    const after = '\n## Team notes\n\nTail text.\n';
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), `${before}${oldBlock(dir)}${after}`);
+    const item = sectionItem(planAdapters(dir, { templates, history: oldHistory(dir) }));
+    assert.equal(item.status, 'update');
+    const next = renderSectionInto(item);
+    assert.ok(next.startsWith(before));
+    assert.ok(next.endsWith(after));
+    assert.ok(next.includes('NEW SECTION LINE'));
+    assert.equal(next, `${before}${item.content}${after}`);
+  } finally {
+    fs.rmSync(templates, { recursive: true, force: true });
+    cleanup(dir);
+  }
+});
+
+test('section: an edited section is preserved', () => {
+  const dir = tempProject();
+  const templates = sectionTemplates();
+  try {
+    const edited = oldBlock(dir).replace('## IDE Factory', '## IDE Factory (our edits)');
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), `# Project\n\n${edited}`);
+    const item = sectionItem(planAdapters(dir, { templates, history: oldHistory(dir) }));
+    assert.equal(item.status, 'preserved');
+  } finally {
+    fs.rmSync(templates, { recursive: true, force: true });
+    cleanup(dir);
+  }
+});
+
+test('section: unpaired, reversed, and repeated markers are malformed and never changed', () => {
+  const dir = tempProject();
+  try {
+    const block = oldBlock(dir);
+    const cases = {
+      'start without end': '# P\n\n<!-- idefactory:start -->\nhalf\n',
+      'end without start': '# P\n\nhalf\n<!-- idefactory:end -->\n',
+      reversed: '# P\n\n<!-- idefactory:end -->\nx\n<!-- idefactory:start -->\n',
+      repeated: `# P\n\n${block}\n${block}`,
+    };
+    for (const [name, text] of Object.entries(cases)) {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), text);
+      const item = sectionItem(planAdapters(dir));
+      assert.equal(item.status, 'malformed', name);
+      assert.match(item.reason, /marker/i, name);
+      assert.throws(() => renderSectionInto(item), /malformed/i, name);
+      assert.equal(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), text, name);
+    }
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('section: a CRLF file is updated with CRLF and the rest is untouched', () => {
+  const dir = tempProject();
+  const templates = sectionTemplates();
+  try {
+    const crlf = (text) => text.replace(/\n/g, '\r\n');
+    const before = crlf('# Project\n\nIntro.\n\n');
+    const after = crlf('\nTail.\n');
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), `${before}${crlf(oldBlock(dir))}${after}`);
+    const item = sectionItem(planAdapters(dir, { templates, history: oldHistory(dir) }));
+    assert.equal(item.status, 'update');
+    const next = renderSectionInto(item);
+    assert.equal(next, `${before}${crlf(item.content)}${after}`);
+    assert.ok(!/[^\r]\n/.test(next));
+  } finally {
+    fs.rmSync(templates, { recursive: true, force: true });
+    cleanup(dir);
+  }
+});
+
+test('section: a block equal to the new rendering is current even with CRLF', () => {
+  const dir = tempProject();
+  try {
+    const block = oldBlock(dir).replace(/\n/g, '\r\n');
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), `# P\r\n\r\n${block}`);
+    assert.equal(sectionItem(planAdapters(dir)).status, 'current');
   } finally {
     cleanup(dir);
   }
