@@ -83,6 +83,29 @@ function withNewline(text) {
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
+export const EXTENSIONS_DIR = '.factory/extensions';
+const EXTENSION_START = '<!-- idefactory:extension:start -->';
+const EXTENSION_END = '<!-- idefactory:extension:end -->';
+
+/** The project's extension section for one generated name, or '' when there is none. */
+function extensionSection(project, group, name) {
+  const rel = `${EXTENSIONS_DIR}/${group}/${name}.md`;
+  const file = path.join(project, rel);
+  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return '';
+  const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim();
+  if (text === '') return '';
+  return [
+    EXTENSION_START,
+    '## Project extensions',
+    '',
+    `The text below comes from \`${rel}\`. Where it conflicts with the factory text above, follow the text below.`,
+    '',
+    text,
+    EXTENSION_END,
+    '',
+  ].join('\n');
+}
+
 function entry(filePath, content, kind, name, scope = 'file') {
   return {
     path: filePath,
@@ -109,7 +132,11 @@ export function renderAdapters(project, options = {}) {
     const from = path.join(skillsRoot, name);
     if (!fs.statSync(from).isDirectory()) continue;
     for (const rel of walkFiles(from)) {
-      const content = fs.readFileSync(path.join(from, rel), 'utf8');
+      let content = fs.readFileSync(path.join(from, rel), 'utf8');
+      if (rel === 'SKILL.md') {
+        const extra = extensionSection(project, 'skills', name);
+        if (extra) content = `${withNewline(content)}\n${extra}`;
+      }
       for (const dest of SKILL_DIRS) {
         entries.push(entry(posix(dest, name, rel), content, 'skill', name));
       }
@@ -118,7 +145,8 @@ export function renderAdapters(project, options = {}) {
 
   for (const command of COMMANDS) {
     const body = readText(path.join(templates, 'commands', `${command.name}.md`)).trim();
-    const owned = `${body}\n\n${MARKER}\n`;
+    const extra = extensionSection(project, 'commands', command.name);
+    const owned = `${body}${extra ? `\n\n${extra.trimEnd()}` : ''}\n\n${MARKER}\n`;
     const plain = `---\ndescription: ${command.description}\n---\n\n${owned}`;
     entries.push(entry(`.cursor/commands/${command.name}.md`, plain, 'command', command.name));
     entries.push(entry(`.claude/commands/${command.name}.md`, plain, 'command', command.name));
@@ -131,21 +159,23 @@ export function renderAdapters(project, options = {}) {
     entries.push(entry(`.cline/workflows/${command.name}.md`, owned, 'command', command.name));
   }
 
+  const ruleExtra = extensionSection(project, 'rules', 'factory');
+  const withRule = (text) => (ruleExtra ? `${withNewline(text)}\n${ruleExtra}` : withNewline(text));
   entries.push(entry(
     '.cursor/rules/factory.mdc',
-    withNewline(readText(path.join(templates, 'cursor/rules/factory.mdc'))),
+    withRule(readText(path.join(templates, 'cursor/rules/factory.mdc'))),
     'rule',
     'factory',
   ));
   entries.push(entry(
     '.github/agents/factory.agent.md',
-    withNewline(readText(path.join(templates, 'copilot/factory.agent.md'))),
+    withRule(readText(path.join(templates, 'copilot/factory.agent.md'))),
     'agent',
     'factory',
   ));
   entries.push(entry(
     '.cline/rules/factory.md',
-    withNewline(readText(path.join(templates, 'cline/rules/factory.md'))),
+    withRule(readText(path.join(templates, 'cline/rules/factory.md'))),
     'rule',
     'factory',
   ));
