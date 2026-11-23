@@ -390,3 +390,62 @@ An implementing-stage run request for a `code` attempt whose checks include no t
 - **WHEN** run reaches the implementing stage for a `code` attempt whose checks include `unit` and no red or exception is recorded
 - **THEN** the request asks for a failing test recorded with `idefactory verify run --red`
 - **AND** its next state is `red-confirmed`
+
+### Requirement: Required checks are the profile and item checks together
+The required checks for a work item's attempt SHALL be the checks of its `verificationProfile` together with its own `checks`, with duplicates removed. The review handoff and completion SHALL use that same set. A `verificationProfile` that is not defined in `.factory/profiles.json` SHALL refuse the handoff and completion with an error that names it.
+
+#### Scenario: Profile check missing from the item
+- **WHEN** a `code` item lists only `unit` and its `verificationProfile` also requires `build`, and the attempt has a passing `unit` record but no `build` record
+- **THEN** the attempt is not handed to the reviewer
+- **AND** the request names `build` as missing and tells the engineer to record it with `idefactory verify run`
+
+#### Scenario: Completion uses the profile too
+- **WHEN** complete receives an accepted attempt whose item lists only `unit` and whose profile also requires `build`, and no passing `build` record exists at the current clean HEAD
+- **THEN** completion fails naming `build`
+- **AND** the work item remains unfinished
+
+#### Scenario: Review entry is refused while a check is missing
+- **WHEN** a transition from `verifying` or `security-checking` to `awaiting-review` is requested and a required check has no passing record at the current clean HEAD
+- **THEN** the transition is refused
+- **AND** the attempt state is unchanged
+
+#### Scenario: Unknown profile
+- **WHEN** an item's `verificationProfile` is not defined in `.factory/profiles.json`
+- **THEN** the handoff and completion are refused with an error that names the profile
+- **AND** the factory does not fall back to `unit`
+
+#### Scenario: Unit-only profile
+- **WHEN** an item's `verificationProfile` is `cli` with checks `["unit"]` and its only check has a passing record at the current clean HEAD
+- **THEN** the attempt may be handed to review and completed
+
+### Requirement: Transition evidence keys and shapes
+`idefactory attempt transition` SHALL accept only the evidence keys `reviewerId`, `implementerId`, `securityReviewerId`, `verdict`, `notes`, `changedFiles`, and `baseRev`. A transition given any other key, or a supported key whose value has the wrong type, SHALL fail before it changes the attempt and SHALL name the offending key or value. A `verdict` that conflicts with the transition SHALL be refused.
+
+#### Scenario: Nested review shape is refused
+- **WHEN** a reviewer rejects an attempt in `awaiting-review` with evidence that nests the notes under a `review` key
+- **THEN** the command exits with an error that names `review` and points to the top-level `notes` key
+- **AND** the attempt file is byte-for-byte unchanged
+
+#### Scenario: Documented top-level notes are stored
+- **WHEN** a reviewer rejects an attempt in `awaiting-review` with `reviewerId`, `verdict` of `REJECT`, and top-level `notes` containing review findings
+- **THEN** the attempt moves to `rejected`
+- **AND** its stored `evidence.review.notes` equals those findings
+
+#### Scenario: Misspelled key is refused
+- **WHEN** a transition is given evidence with a key such as `note` that the command does not support
+- **THEN** the command exits with an error that names `note`
+- **AND** the attempt is not changed
+
+#### Scenario: Wrong value type is refused
+- **WHEN** `notes` is an object, or `changedFiles` is not an array of strings
+- **THEN** the command exits with an error that names that key
+- **AND** the attempt is not changed
+
+#### Scenario: Conflicting verdict is refused
+- **WHEN** a reviewer rejects an attempt in `awaiting-review` with a `verdict` of `ACCEPT`
+- **THEN** the transition is refused with an error that names the conflicting verdict
+- **AND** the attempt is not changed
+
+#### Scenario: Rejection without a verdict is accepted
+- **WHEN** a reviewer rejects an attempt in `awaiting-review` with `reviewerId` and `notes` and no `verdict`
+- **THEN** the attempt moves to `rejected` with the notes stored
