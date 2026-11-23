@@ -30,7 +30,7 @@
 
 ## 6. Forced replacement and pins
 
-- [ ] 6.1 Add failing CLI tests that `--replace <path>` replaces only that preserved file after copying the old bytes to `backups/`, that repeating `--replace` replaces several, that `--force` replaces every preserved file, that both leave a pinned or malformed file alone with a message, that a path that is not preserved is reported, and that `--force` followed by a value fails with a message naming `--replace <path>` and `--path` without writing anything. Implement the options. Verify with `node --test test/adapter-ownership.test.mjs`.
+- [x] 6.1 Add failing CLI tests that `--replace <path>` replaces only that preserved file after copying the old bytes to `backups/`, that repeating `--replace` replaces several, that `--force` replaces every preserved file, that both leave a pinned or malformed file alone with a message, that a path that is not preserved is reported, and that `--force` followed by a value fails with a message naming `--replace <path>` and `--path` without writing anything. Implement the options. Verify with `node --test test/adapter-ownership.test.mjs`.
 - [ ] 6.2 Add failing CLI tests that `adapters pin <path>` records the pin and the upstream digest in the manifest and writes nothing else, that upgrade skips the pinned file, reports `upstream changed since pin` when the rendering moved, and exits 0, that `adapters unpin` makes the file classify normally, that an unknown path fails with the manifest unchanged, and that pinning with no manifest creates one holding only the pin. Implement `idefactory adapters pin` and `unpin`, with the lease key and help text. Verify with `node --test test/adapter-ownership.test.mjs test/writer-lease.test.mjs`.
 
 ## 7. Extension layer

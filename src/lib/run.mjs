@@ -114,6 +114,7 @@ async function dispatchCommand(cmd, ctx) {
         withOpenspec: Boolean(parsed.flags['with-openspec']),
         withBacklog: Boolean(parsed.flags['with-backlog']),
         dryRun,
+        ...adapterOptions(parsed),
         env,
       });
       if (parsed.flags.json) {
@@ -134,7 +135,7 @@ async function dispatchCommand(cmd, ctx) {
     }
     case 'upgrade': {
       const dryRun = Boolean(parsed.flags['dry-run']);
-      const { sync } = upgradeProject(project, { dryRun });
+      const { sync } = upgradeProject(project, { dryRun, ...adapterOptions(parsed) });
       if (parsed.flags.json) {
         out(JSON.stringify(sync.report, null, 2));
         return sync.report.exitCode;
@@ -497,6 +498,19 @@ function parseArgs(argv) {
     } else rest.push(token);
   }
   return { cmd: rest[0], rest: rest.slice(1), flags, sequence };
+}
+
+function adapterOptions(parsed) {
+  if (typeof parsed.flags.force === 'string') {
+    throw new Error(
+      '--force takes no value. To replace one file use --replace <path>; to name the project use --path <dir>.',
+    );
+  }
+  const replace = parsed.sequence.filter((entry) => entry.key === 'replace').map((entry) => entry.value);
+  if (replace.some((value) => value === true)) {
+    throw new Error('--replace needs a path: --replace <path>.');
+  }
+  return { force: Boolean(parsed.flags.force), replace };
 }
 
 function reportSetupGaps(project, out) {

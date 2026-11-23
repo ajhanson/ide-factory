@@ -29,14 +29,18 @@ const STATE_FILES = [
   'identity/wisdom.md',
 ];
 
+function syncOptions(options) {
+  return { force: Boolean(options.force), replace: options.replace || [] };
+}
+
 export function initProject(project, options = {}) {
   if (options.dryRun) {
-    const sync = syncAdapters(project, { command: 'init', dryRun: true });
+    const sync = syncAdapters(project, { command: 'init', ...syncOptions(options), dryRun: true });
     return { created: plannedState(project), sync };
   }
   fs.mkdirSync(project, { recursive: true });
   const created = writeState(project, options);
-  const sync = syncAdapters(project, { command: 'init' });
+  const sync = syncAdapters(project, { command: 'init', ...syncOptions(options) });
   ensureWorkScaffold(project);
   if (options.withOpenspec) ensureOpenspec(project, options.env || process.env);
   if (options.withBacklog) {
@@ -54,7 +58,7 @@ export function upgradeProject(project, options = {}) {
   if (!fs.existsSync(path.join(project, '.factory', 'team.md'))) {
     throw new Error('No .factory/ team state. Run idefactory init first.');
   }
-  const sync = syncAdapters(project, { command: 'upgrade', dryRun: Boolean(options.dryRun) });
+  const sync = syncAdapters(project, { command: 'upgrade', ...syncOptions(options), dryRun: Boolean(options.dryRun) });
   if (options.dryRun) return { sync };
   ledger(project, 'upgrade', { adapters: sync.report.summary });
   return { sync };

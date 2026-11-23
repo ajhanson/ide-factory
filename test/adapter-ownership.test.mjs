@@ -252,3 +252,198 @@ test('--json with --dry-run stages nothing', async () => {
     cleanup(dir);
   }
 });
+
+const CLAUDE_REVIEW = '.claude/commands/factory-review.md';
+
+function runDirOf(out) {
+  return out.match(/\.factory\/upgrade\/[^/\s]+/)[0];
+}
+
+test('--replace replaces one preserved file after backing it up and leaves the other preserved', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir, REVIEW);
+    seedConflict(dir, CLAUDE_REVIEW);
+    const result = await idefactory(dir, ['upgrade', '--replace', REVIEW]);
+    assert.equal(result.code, 3, result.err + result.out);
+    assert.match(read(dir, REVIEW), /Follow the factory-build skill's review step/);
+    assert.equal(read(dir, CLAUDE_REVIEW), 'Review as our team does.\n');
+    const runDir = runDirOf(result.out);
+    assert.equal(read(dir, `${runDir}/backups/${REVIEW}`), 'Review as our team does.\n');
+    assert.equal(readManifest(dir).files[REVIEW].digest, digest(read(dir, REVIEW)));
+    assert.match(result.out, /1 replace, /);
+    assert.match(result.out, /1 preserved/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace can be repeated', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir, REVIEW);
+    seedConflict(dir, CLAUDE_REVIEW);
+    const result = await idefactory(dir, ['upgrade', '--replace', REVIEW, '--replace', CLAUDE_REVIEW]);
+    assert.equal(result.code, 0, result.err + result.out);
+    assert.match(read(dir, REVIEW), /Follow the factory-build skill's review step/);
+    assert.match(read(dir, CLAUDE_REVIEW), /Follow the factory-build skill's review step/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--force replaces every preserved file after a backup and exits 0', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir, REVIEW);
+    seedConflict(dir, CLAUDE_REVIEW);
+    const result = await idefactory(dir, ['upgrade', '--force']);
+    assert.equal(result.code, 0, result.err + result.out);
+    const runDir = runDirOf(result.out);
+    for (const rel of [REVIEW, CLAUDE_REVIEW]) {
+      assert.match(read(dir, rel), /Follow the factory-build skill's review step/);
+      assert.equal(read(dir, `${runDir}/backups/${rel}`), 'Review as our team does.\n');
+    }
+    const again = await idefactory(dir, ['upgrade']);
+    assert.equal(again.code, 0);
+    assert.match(again.out, /0 preserved/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace also resets an edited file that only differs locally', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    fs.appendFileSync(path.join(dir, REVIEW), '\nOur extra rule.\n');
+    const result = await idefactory(dir, ['upgrade', '--replace', REVIEW]);
+    assert.equal(result.code, 0, result.err + result.out);
+    assert.doesNotMatch(read(dir, REVIEW), /Our extra rule/);
+    assert.match(read(dir, `${runDirOf(result.out)}/backups/${REVIEW}`), /Our extra rule/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace and --force leave a pinned file alone and say so', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const manifest = readManifest(dir);
+    manifest.files[REVIEW] = { digest: digest('an older rendering\n'), pinned: true };
+    fs.writeFileSync(manifestPath(dir), `${JSON.stringify(manifest, null, 2)}\n`);
+    fs.writeFileSync(path.join(dir, REVIEW), 'Pinned and ours.\n');
+    const replaced = await idefactory(dir, ['upgrade', '--replace', REVIEW]);
+    assert.equal(replaced.code, 0, replaced.err + replaced.out);
+    assert.match(replaced.out, /note: .*pinned/i);
+    const forced = await idefactory(dir, ['upgrade', '--force']);
+    assert.equal(forced.code, 0);
+    assert.equal(read(dir, REVIEW), 'Pinned and ours.\n');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace and --force leave a malformed instruction file alone and say so', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Ours\n<!-- idefactory:start -->\nhalf\n');
+    const replaced = await idefactory(dir, ['upgrade', '--replace', 'AGENTS.md']);
+    assert.equal(replaced.code, 3);
+    assert.match(replaced.out, /note: .*AGENTS\.md.*malformed/i);
+    const forced = await idefactory(dir, ['upgrade', '--force']);
+    assert.equal(forced.code, 3);
+    assert.equal(read(dir, 'AGENTS.md'), '# Ours\n<!-- idefactory:start -->\nhalf\n');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace for a current file notes there is nothing to replace', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const result = await idefactory(dir, ['upgrade', '--replace', REVIEW]);
+    assert.equal(result.code, 0);
+    assert.match(result.out, /note: .*nothing to replace.*current/i);
+    assert.equal(fs.existsSync(path.join(dir, '.factory/upgrade')), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace for a path the factory does not generate fails and writes nothing', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const before = hashTree(dir);
+    const result = await idefactory(dir, ['upgrade', '--replace', 'src/app.js']);
+    assert.equal(result.code, 1);
+    assert.match(result.err, /not a generated adapter file/);
+    assert.deepEqual(hashTree(dir), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--force followed by a value fails and names --replace and --path', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const before = hashTree(dir);
+    const result = await idefactory(dir, ['upgrade', '--force', 'somewhere']);
+    assert.equal(result.code, 1);
+    assert.match(result.err, /--force takes no value/);
+    assert.match(result.err, /--replace <path>/);
+    assert.match(result.err, /--path/);
+    assert.deepEqual(hashTree(dir), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--replace without a path fails', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const result = await idefactory(dir, ['upgrade', '--replace']);
+    assert.equal(result.code, 1);
+    assert.match(result.err, /--replace needs a path/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--force with --dry-run plans a replacement and writes nothing', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const before = hashTree(dir);
+    const result = await idefactory(dir, ['upgrade', '--dry-run', '--force']);
+    assert.equal(result.code, 0, result.err + result.out);
+    assert.match(result.out, new RegExp(`replace\\s+${REVIEW.replace(/\./g, '\\.')}`));
+    assert.deepEqual(hashTree(dir), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('init accepts --replace and --force like upgrade', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const result = await idefactory(dir, ['init', '--force']);
+    assert.equal(result.code, 0, result.err + result.out);
+    assert.match(read(dir, REVIEW), /Follow the factory-build skill's review step/);
+  } finally {
+    cleanup(dir);
+  }
+});

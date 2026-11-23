@@ -435,33 +435,96 @@ export function emptySummary() {
 
 function textFor(item) {
   if (item.scope === 'section') return renderSectionInto(item);
-  if (item.status === 'update' && item.localText !== null) {
+  if ((item.status === 'update' || item.status === 'replace') && item.localText !== null) {
     return withEol(item.content, detectEol(item.localText));
   }
   return item.content;
 }
 
+function normalizePath(project, value) {
+  let rel = String(value).replace(/\\/g, '/');
+  if (path.isAbsolute(value)) rel = path.relative(project, value).replace(/\\/g, '/');
+  return rel.replace(/^\.\//, '');
+}
+
 /**
- * Apply a plan: write created and updated files, then the manifest.
- * A preserved or malformed file is never written.
+ * Mark preserved (or, for an explicit path, modified) files for replacement.
+ * Nothing is written. Throws for a path that is not a generated adapter file.
+ * @returns {{ plan: object, notes: string[] }}
+ */
+export function markReplacements(project, plan, { force = false, replace = [] } = {}) {
+  const notes = [];
+  const byPath = new Map(plan.files.map((item) => [item.path, item]));
+  const replaceable = new Set(['preserved', 'modified']);
+  const mark = (item) => ({ ...item, status: 'replace', replacedStatus: item.status });
+  const files = plan.files.slice();
+  const indexOf = (item) => files.findIndex((entry) => entry.key === item.key);
+
+  const unknown = replace
+    .map((value) => normalizePath(project, value))
+    .filter((rel) => !byPath.has(rel));
+  if (unknown.length) {
+    throw new Error(`${unknown.join(', ')}: not a generated adapter file. Nothing was written.`);
+  }
+
+  for (const value of replace) {
+    const rel = normalizePath(project, value);
+    const item = files[indexOf(byPath.get(rel))];
+    if (replaceable.has(item.status)) files[indexOf(item)] = mark(item);
+    else if (item.status === 'pinned') {
+      notes.push(`${rel} is pinned and was not replaced. Run idefactory adapters unpin ${rel} first.`);
+    } else if (item.status === 'malformed') {
+      notes.push(`${rel} has malformed instruction markers and was not replaced: ${item.reason}. Repair them by hand.`);
+    } else if (item.status !== 'replace') {
+      notes.push(`Nothing to replace for ${rel}: it is ${item.status}.`);
+    }
+  }
+  if (force) {
+    files.forEach((item, index) => {
+      if (item.status === 'preserved') files[index] = mark(item);
+      else if (item.status === 'malformed') {
+        notes.push(`${item.path} has malformed instruction markers and was not replaced: ${item.reason}. Repair them by hand.`);
+      }
+    });
+  }
+  return { plan: { ...plan, files }, notes };
+}
+
+/**
+ * Apply a plan: write created, updated, and replaced files, then the manifest.
+ * A preserved, modified, pinned, or malformed file is never written. Each
+ * replaced file is copied under the run directory first.
  * @param {string} project
  * @param {ReturnType<typeof planAdapters>} plan
+ * @param {{ run?: { runDir: string, rel: string } | null }} [options]
  */
-export function applyPlan(project, plan) {
+export function applyPlan(project, plan, options = {}) {
   const manifest = { version: MANIFEST_VERSION, files: {} };
   for (const [key, value] of Object.entries(plan.manifest.files)) manifest.files[key] = { ...value };
   const summary = emptySummary();
   const files = [];
+  const backups = new Map();
+
+  const replaced = plan.files.filter((item) => item.status === 'replace');
+  if (replaced.length > 0 && !options.run) throw new Error('A replacement needs a run directory for backups.');
+  for (const item of replaced) {
+    const target = path.join(options.run.runDir, 'backups', item.path);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(project, item.path), target);
+    backups.set(item.key, `${options.run.rel}/backups/${item.path}`);
+  }
 
   for (const item of plan.files) {
-    let action = item.status;
     if (item.status === 'create' || item.status === 'update') {
       atomicWrite(path.join(project, item.path), textFor(item));
       manifest.files[item.key] = { digest: item.rendering };
       summary[item.status === 'create' ? 'created' : 'updated'] += 1;
+    } else if (item.status === 'replace') {
+      atomicWrite(path.join(project, item.path), textFor(item));
+      manifest.files[item.key] = { digest: item.rendering };
+      summary.replaced += 1;
     } else if (item.status === 'current') {
-      manifest.files[item.key] = { ...(manifest.files[item.key] || {}), digest: item.rendering };
-      delete manifest.files[item.key].pinned;
+      manifest.files[item.key] = { digest: item.rendering };
       summary.current += 1;
     } else if (item.status === 'pinned') {
       summary.pinned += 1;
@@ -472,7 +535,7 @@ export function applyPlan(project, plan) {
     } else {
       summary.preserved += 1;
     }
-    files.push({ ...item, action });
+    files.push({ ...item, action: item.status, backup: backups.get(item.key) || null });
   }
   for (const key of plan.drop) delete manifest.files[key];
   summary.orphan = plan.orphans.length;
@@ -602,7 +665,7 @@ function writeStaged(runDir, rel, text) {
 export function stageConflicts(project, plan, options = {}) {
   const preserved = plan.files.filter((item) => item.status === 'preserved');
   if (preserved.length === 0) return null;
-  const run = createRun(project, options.now);
+  const run = options.run || createRun(project, options.now);
   const files = new Map();
   for (const item of preserved) {
     const incomingRel = `incoming/${item.path}`;

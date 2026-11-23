@@ -135,13 +135,21 @@ Init and upgrade SHALL accept `--dry-run`, which prints the plan per file as cre
 - **THEN** the output is one JSON document with a status and a digest for each generated path
 
 ### Requirement: Explicit forced replacement
-`--force` SHALL replace every preserved file and `--replace <path>` SHALL replace one preserved file. Each replaced file SHALL first be copied to `.factory/upgrade/<run>/backups/` and the manifest SHALL record the new digest. A pinned or malformed file SHALL NOT be replaced by either option.
+`--force` SHALL replace every preserved file and `--replace <path>` SHALL replace one preserved or modified file. Each replaced file SHALL first be copied to `.factory/upgrade/<run>/backups/` and the manifest SHALL record the new digest. A pinned or malformed file SHALL NOT be replaced by either option.
 
 #### Scenario: Replace one file
 - **WHEN** two files are preserved and upgrade runs with `--replace` for one of them
 - **THEN** that file matches the new rendering
 - **AND** its previous content is in the backups directory
 - **AND** the other file is still preserved
+
+#### Scenario: Reset a modified file
+- **WHEN** a file was edited with no upstream change and upgrade runs with `--replace` for it
+- **THEN** the file matches the current rendering and its previous content is in the backups directory
+
+#### Scenario: Path that is not generated
+- **WHEN** `--replace` names a path that the factory does not generate
+- **THEN** the command fails and nothing is written
 
 #### Scenario: Force all
 - **WHEN** upgrade runs with `--force`
