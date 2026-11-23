@@ -371,3 +371,19 @@ test('every shipped copy of factory-build and factory-run documents the evidence
     }
   }
 });
+
+test('README and help document both evidence flags', async () => {
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+  assert.match(readme, /--evidence-file/);
+  assert.match(readme, /`--evidence <json>`/);
+  assert.match(readme, /only one/i);
+  assert.match(readme, /UTF-16LE/);
+  assert.match(readme, /Remove-Item/);
+  const dir = tempProject();
+  try {
+    const help = await idefactory(dir, ['--help']);
+    assert.match(help.out, /--evidence json \| --evidence-file path/);
+  } finally {
+    cleanup(dir);
+  }
+});
