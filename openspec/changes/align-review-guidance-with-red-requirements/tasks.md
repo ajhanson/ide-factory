@@ -19,7 +19,7 @@
 
 ## 5. Integration
 
-- [ ] 5.1 Run `npx openspec validate align-review-guidance-with-red-requirements --strict`, `npm test`, and `node src/cli.mjs doctor`. Add a test that a recorded waiver on a `code` attempt appears in the reviewer packet next to `Red required for`, and that the review command in a fresh `init` tells the reviewer to accept it. Record the results in `implementation-notes.md` in the change directory. Verify with `node --test test/review-guidance.test.mjs`.
+- [x] 5.1 Run `npx openspec validate align-review-guidance-with-red-requirements --strict`, `npm test`, and `node src/cli.mjs doctor`. Add a test that a recorded waiver on a `code` attempt appears in the reviewer packet next to `Red required for`, and that the review command in a fresh `init` tells the reviewer to accept it. Record the results in `implementation-notes.md` in the change directory. Verify with `node --test test/review-guidance.test.mjs`.
 
 ## Workflow follow-up
 

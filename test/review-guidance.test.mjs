@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import { renderWorkPacket } from '../src/lib/queue.mjs';
+import { getWorkItem } from '../src/lib/work.mjs';
 import { cleanup, idefactory, repoRoot, tempProject } from './helpers.mjs';
 
 const REVIEW_COMMAND_PATHS = [
@@ -127,6 +130,60 @@ test('a second init leaves an edited charter byte-identical', async () => {
     fs.writeFileSync(file, '# Reviewer\n\nProject-specific charter.\n');
     assert.equal((await idefactory(dir, ['init'])).code, 0);
     assert.equal(fs.readFileSync(file, 'utf8'), '# Reviewer\n\nProject-specific charter.\n');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function commitAll(dir) {
+  const run = (args) => {
+    const result = spawnSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      shell: false,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'idefactory-test',
+        GIT_AUTHOR_EMAIL: 'test@example.com',
+        GIT_COMMITTER_NAME: 'idefactory-test',
+        GIT_COMMITTER_EMAIL: 'test@example.com',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  };
+  run(['init']);
+  run(['add', '-A']);
+  run(['commit', '-m', 'seed']);
+}
+
+test('a recorded waiver shows in the reviewer packet and the fresh review command accepts it', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    fs.mkdirSync(path.join(dir, 'openspec/changes/demo'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'openspec/changes/demo/tasks.md'),
+      '- [ ] 1.1 Add parser\n  factory:\n    kind: general\n    checks: [unit]\n',
+    );
+    assert.equal((await idefactory(dir, ['sync-tasks', 'demo'])).code, 0);
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    assert.equal(started.code, 0, started.err);
+    const attemptId = JSON.parse(started.out).id;
+    commitAll(dir);
+    const waived = await idefactory(dir, [
+      'red', 'waive', attemptId, '--kind', 'unit', '--note', 'no seam to test', '--approver', 'human-1',
+      '--acknowledge-not-stuck',
+    ]);
+    assert.equal(waived.code, 0, waived.err + waived.out);
+
+    const packet = renderWorkPacket(dir, getWorkItem(dir, 'demo', '1.1'), 'reviewer');
+    assert.match(packet, /^Red required for: unit$/m);
+    assert.match(packet, /Red exceptions:\n- .*unit/);
+    assert.match(packet, /human-1/);
+
+    const command = read(dir, '.cursor/commands/factory-review.md');
+    assert.match(command, /valid red exception that a human authorized/);
+    assert.match(command, /Do not ask for a new failing test where one is recorded/);
   } finally {
     cleanup(dir);
   }
