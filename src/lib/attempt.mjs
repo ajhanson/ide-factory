@@ -14,6 +14,7 @@ import {
 import { getWorkItem, updateWorkItem } from './work.mjs';
 import { hasAnyFailingRed, requiredTestKinds, retryKey } from './red-evidence.mjs';
 import { redSatisfaction } from './red-exceptions.mjs';
+import { missingChecks } from './required-checks.mjs';
 
 export const ATTEMPT_STATES = [
   'planned',
@@ -263,6 +264,16 @@ function validateEvidence(project, attempt, nextState, evidence) {
       throw new Error(
         'security-sensitive work cannot transition verifying → awaiting-review; remain in verifying and use security-checking',
       );
+    }
+  }
+  if (
+    nextState === 'awaiting-review'
+    && (attempt.state === 'verifying' || attempt.state === 'security-checking')
+  ) {
+    const item = getWorkItem(project, attempt.change, attempt.taskId);
+    const missing = item ? missingChecks(project, attempt, item) : [];
+    if (missing.length) {
+      throw new Error(`awaiting-review requires passing check evidence for: ${missing.join(', ')}`);
     }
   }
   if (nextState === 'awaiting-review' && attempt.state === 'security-checking') {

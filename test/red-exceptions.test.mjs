@@ -116,7 +116,7 @@ async function seedAttempt(dir, checks = ['unit']) {
       '  factory:',
       '    kind: general',
       `    checks: [${checks.join(', ')}]`,
-      '    verificationProfile: frontend-low',
+      '    verificationProfile: cli',
       '    roles: [engineer, reviewer, scribe]',
       '',
     ].join('\n'),
@@ -433,6 +433,10 @@ async function rejectedSource(dir) {
   await toImplementing(dir, first.id, 'engineer-1');
   const red = await idefactory(dir, ['verify', 'run', first.id, '--check', 'unit', '--red']);
   assert.equal(red.code, 0, red.err + red.out);
+  fs.writeFileSync(path.join(dir, 'fixed.flag'), 'fixed\n');
+  ensureCleanGitCommit(dir);
+  const pass = await idefactory(dir, ['verify', 'run', first.id, '--check', 'unit']);
+  assert.equal(pass.code, 0, pass.err + pass.out);
   assert.equal((await transition(dir, first.id, 'verifying')).code, 0);
   assert.equal((await transition(dir, first.id, 'awaiting-review')).code, 0);
   const rejected = await transition(dir, first.id, 'rejected', {

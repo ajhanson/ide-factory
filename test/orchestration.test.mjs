@@ -103,7 +103,7 @@ async function seedChange(dir, tasksBody) {
       '  factory:',
       '    kind: general',
       '    checks: [unit]',
-      '    verificationProfile: frontend-low',
+      '    verificationProfile: cli',
       '    roles: [engineer, reviewer, scribe]',
       '',
     ].join('\n'),
@@ -129,7 +129,8 @@ async function recordPassingChecks(dir, attemptId, kinds = { unit: 0 }) {
       'verify', 'run', attemptId, '--check', kind,
     ]);
     assert.equal(result.code, 0, result.err + result.out);
-    const record = getAttempt(dir, attemptId).evidence.verification
+    const stored = getAttempt(dir, attemptId).evidence;
+    const record = [...(stored.verification || []), ...(stored.security || [])]
       .find((entry) => entry.kind === kind);
     assert.equal(record?.passed, true, `verify run must store a pass for ${kind}`);
   }
@@ -174,6 +175,30 @@ function writeAttemptEvidence(dir, attemptId, patchEvidence) {
   const file = attemptPath(dir, attemptId);
   const attempt = JSON.parse(fs.readFileSync(file, 'utf8'));
   attempt.evidence = { ...attempt.evidence, ...patchEvidence };
+  fs.writeFileSync(file, `${JSON.stringify(attempt, null, 2)}\n`);
+}
+
+const SECURITY_PROFILE_CHECKS = {
+  unit: 0,
+  build: 0,
+  'dependency-audit': 0,
+  'secret-scan': 0,
+  sast: 0,
+  'threat-review': 0,
+};
+
+async function advanceWithoutBuild(dir, attemptId) {
+  await advanceToVerifying(dir, attemptId, { passChecks: { unit: 0, build: 0 } });
+  const verification = getAttempt(dir, attemptId).evidence.verification
+    .filter((entry) => entry.kind !== 'build');
+  writeAttemptEvidence(dir, attemptId, { verification });
+}
+
+function forceAccepted(dir, attemptId) {
+  const file = attemptPath(dir, attemptId);
+  const attempt = JSON.parse(fs.readFileSync(file, 'utf8'));
+  attempt.state = 'accepted';
+  attempt.reviewerId = 'reviewer-1';
   fs.writeFileSync(file, `${JSON.stringify(attempt, null, 2)}\n`);
 }
 
@@ -240,7 +265,7 @@ test('security-sensitive verification routes to security-reviewer', async () => 
     assert.equal(started.code, 0, started.err);
     const attempt = JSON.parse(started.out);
     // Routing depends on work-item checks/profile and verifying state, not forged evidence.
-    await advanceToVerifying(dir, attempt.id, { passChecks: {} });
+    await advanceToVerifying(dir, attempt.id, { passChecks: SECURITY_PROFILE_CHECKS });
     const result = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
     assert.equal(result.code, 2, result.err + result.out);
     assert.match(result.out, /^Role: security-reviewer$/m);
@@ -272,7 +297,7 @@ test('security-sensitive verifying rejects awaiting-review bypass; run still nam
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     assert.equal(started.code, 0, started.err);
     const attempt = JSON.parse(started.out);
-    await advanceToVerifying(dir, attempt.id, { passChecks: {} });
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0, build: 0 } });
 
     const bypass = await idefactory(dir, [
       'attempt', 'transition', attempt.id, 'awaiting-review',
@@ -314,7 +339,7 @@ test('verificationProfile alone does not route to security-reviewer or block awa
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     assert.equal(started.code, 0, started.err);
     const attempt = JSON.parse(started.out);
-    await advanceToVerifying(dir, attempt.id, { passChecks: {} });
+    await advanceToVerifying(dir, attempt.id, { passChecks: SECURITY_PROFILE_CHECKS });
 
     const toReview = await idefactory(dir, [
       'attempt', 'transition', attempt.id, 'awaiting-review',
@@ -354,7 +379,7 @@ test('security-reviewer route in fresh session after sticky unchanged-state with
     assert.match(`${unchanged.err}\n${unchanged.out}`, /unchanged-state/);
     assert.doesNotMatch(`${unchanged.err}\n${unchanged.out}`, /# Orchestration request/);
 
-    await advanceToVerifying(dir, attempt.id, { passChecks: {} });
+    await advanceToVerifying(dir, attempt.id, { passChecks: SECURITY_PROFILE_CHECKS });
 
     const stickyResume = await idefactory(dir, ['run', '--change', 'demo', '--max-agent-steps', String(maxAgentSteps)]);
     assert.equal(stickyResume.code, 0, stickyResume.err + stickyResume.out);
@@ -503,7 +528,7 @@ test('complete refuses same implementer and reviewer', async () => {
     const attempt = JSON.parse(started.out);
     await advanceToVerifying(dir, attempt.id, {
       implementerId: 'same-agent',
-      passChecks: {},
+      passChecks: { unit: 0 },
     });
     await idefactory(dir, [
       'attempt', 'transition', attempt.id, 'awaiting-review',
@@ -528,17 +553,16 @@ test('complete refuses missing verification evidence', async () => {
     await seedChange(dir);
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     const attempt = JSON.parse(started.out);
-    await advanceToVerifying(dir, attempt.id, { passChecks: {} });
-    writeCheckRegistry(dir, { unit: 0 });
-    ensureCleanGitCommit(dir);
-    await idefactory(dir, [
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0 } });
+    assert.equal((await idefactory(dir, [
       'attempt', 'transition', attempt.id, 'awaiting-review',
       '--evidence', '{}',
-    ]);
-    await idefactory(dir, [
+    ])).code, 0);
+    assert.equal((await idefactory(dir, [
       'attempt', 'transition', attempt.id, 'accepted',
       '--evidence', JSON.stringify({ reviewerId: 'reviewer-1', verdict: 'ACCEPT' }),
-    ]);
+    ])).code, 0);
+    writeAttemptEvidence(dir, attempt.id, { verification: [] });
     const done = await idefactory(dir, ['complete', 'demo', '1.1', '--attempt', attempt.id]);
     assert.notEqual(done.code, 0);
     assert.match(done.err, /Missing passing check|attestation|issuer/i);
@@ -630,7 +654,7 @@ test('complete refuses forged passed:true without verification-command attestati
     await seedChange(dir);
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     const attempt = JSON.parse(started.out);
-    await acceptAttempt(dir, attempt.id, { passChecks: {} });
+    await acceptAttempt(dir, attempt.id, { passChecks: { unit: 0 } });
     writeCheckRegistry(dir, { unit: 0 });
     ensureCleanGitCommit(dir);
     writeAttemptEvidence(dir, attempt.id, {
@@ -650,13 +674,14 @@ test('complete refuses unknown check kind', async () => {
       '  factory:',
       '    kind: general',
       '    checks: [unit, totally-unknown-check]',
-      '    verificationProfile: frontend-low',
+      '    verificationProfile: cli',
       '    roles: [engineer, reviewer, scribe]',
       '',
     ].join('\n'));
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     const attempt = JSON.parse(started.out);
-    await acceptAttempt(dir, attempt.id, { passChecks: { unit: 0 } });
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0 } });
+    forceAccepted(dir, attempt.id);
     const stored = getAttempt(dir, attempt.id);
     const unit = stored.evidence.verification.find((entry) => entry.kind === 'unit');
     assert.ok(unit);
@@ -681,13 +706,14 @@ test('complete refuses kind with no argv mapping', async () => {
       '  factory:',
       '    kind: general',
       '    checks: [unit, bare-kind]',
-      '    verificationProfile: frontend-low',
+      '    verificationProfile: cli',
       '    roles: [engineer, reviewer, scribe]',
       '',
     ].join('\n'));
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     const attempt = JSON.parse(started.out);
-    await acceptAttempt(dir, attempt.id, { passChecks: { unit: 0 } });
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0 } });
+    forceAccepted(dir, attempt.id);
     const unitArgv = [process.execPath, '-e', 'process.exit(0)'];
     const registry = {
       schemaVersion: 1,
@@ -748,7 +774,7 @@ test('complete refuses non-zero exit code attestation', async () => {
     await seedChange(dir);
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     const attempt = JSON.parse(started.out);
-    await acceptAttempt(dir, attempt.id, { passChecks: {} });
+    await acceptAttempt(dir, attempt.id, { passChecks: { unit: 0 } });
     writeCheckRegistry(dir, { unit: 0 });
     const head = ensureCleanGitCommit(dir);
     const argv = [process.execPath, '-e', 'process.exit(0)'];
@@ -784,7 +810,7 @@ test('complete refuses missing exit code on attestation', async () => {
     await seedChange(dir);
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     const attempt = JSON.parse(started.out);
-    await acceptAttempt(dir, attempt.id, { passChecks: {} });
+    await acceptAttempt(dir, attempt.id, { passChecks: { unit: 0 } });
     writeCheckRegistry(dir, { unit: 0 });
     const head = ensureCleanGitCommit(dir);
     const argv = [process.execPath, '-e', 'process.exit(0)'];
@@ -939,7 +965,7 @@ test('quick route implements as engineer and verifies as reviewer unless securit
     const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
     assert.equal(started.code, 0, started.err);
     const attempt = JSON.parse(started.out);
-    await advanceToVerifying(dir, attempt.id, { passChecks: {} });
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0, build: 0 } });
     const review = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
     assert.equal(review.code, 2, review.err + review.out);
     assert.match(review.out, /^Role: reviewer$/m);
@@ -963,7 +989,7 @@ test('quick route implements as engineer and verifies as reviewer unless securit
     const started = await idefactory(sensitive, ['attempt', 'start', 'demo', '1.1']);
     assert.equal(started.code, 0, started.err);
     const attempt = JSON.parse(started.out);
-    await advanceToVerifying(sensitive, attempt.id, { passChecks: {} });
+    await advanceToVerifying(sensitive, attempt.id, { passChecks: { unit: 0, build: 0 } });
     const review = await idefactory(sensitive, ['run', '--change', 'demo', '--max-tasks', '1']);
     assert.equal(review.code, 2, review.err + review.out);
     assert.match(review.out, /^Role: security-reviewer$/m);
@@ -1176,6 +1202,121 @@ test('internal transitions still record their evidence', async () => {
     });
     assert.equal(failed.state, 'finalize-failed');
     assert.equal(getAttempt(dir, attempt.id).state, 'finalize-failed');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function withProfile(profile) {
+  return [
+    '- [ ] 1.1 Add parser',
+    '  factory:',
+    '    kind: general',
+    '    checks: [unit]',
+    `    verificationProfile: ${profile}`,
+    '    roles: [engineer, reviewer, scribe]',
+    '',
+  ].join('\n');
+}
+
+test('review handoff waits for a profile check the item does not list', async () => {
+  const dir = tempProject();
+  try {
+    await seedChange(dir, withProfile('frontend-low'));
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    assert.equal(started.code, 0, started.err);
+    const attempt = JSON.parse(started.out);
+    await advanceWithoutBuild(dir, attempt.id);
+
+    const run = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(run.code, 2, run.err + run.out);
+    const request = parseOrchestrationJson(run.out);
+    assert.equal(request.role, 'engineer', 'the engineer records the missing check');
+    assert.equal(request.nextState, 'awaiting-review');
+    assert.match(run.out, /build/);
+    assert.match(run.out, /idefactory verify run/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a direct transition to awaiting-review is refused while a profile check is missing', async () => {
+  const dir = tempProject();
+  try {
+    await seedChange(dir, withProfile('frontend-low'));
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    const attempt = JSON.parse(started.out);
+    await advanceWithoutBuild(dir, attempt.id);
+    const before = fs.readFileSync(attemptPath(dir, attempt.id), 'utf8');
+    const refused = await idefactory(dir, [
+      'attempt', 'transition', attempt.id, 'awaiting-review', '--evidence', '{}',
+    ]);
+    assert.notEqual(refused.code, 0);
+    assert.match(refused.err, /build/);
+    assert.equal(fs.readFileSync(attemptPath(dir, attempt.id), 'utf8'), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('completion names a profile check that has no passing record', async () => {
+  const dir = tempProject();
+  try {
+    await seedChange(dir, withProfile('frontend-low'));
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    const attempt = JSON.parse(started.out);
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0, build: 0 } });
+    assert.equal((await idefactory(dir, [
+      'attempt', 'transition', attempt.id, 'awaiting-review', '--evidence', '{}',
+    ])).code, 0);
+    assert.equal((await idefactory(dir, [
+      'attempt', 'transition', attempt.id, 'accepted',
+      '--evidence', JSON.stringify({ reviewerId: 'reviewer-1', verdict: 'ACCEPT' }),
+    ])).code, 0);
+    writeAttemptEvidence(dir, attempt.id, {
+      verification: getAttempt(dir, attempt.id).evidence.verification
+        .filter((entry) => entry.kind !== 'build'),
+    });
+    await assertCompleteLeavesUnfinished(dir, attempt.id, /build/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('an item whose profile is listed as cli needs only unit and can be completed', async () => {
+  const dir = tempProject();
+  try {
+    await seedChange(dir, withProfile('cli'));
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    const attempt = JSON.parse(started.out);
+    await acceptAttempt(dir, attempt.id, { passChecks: { unit: 0 } });
+    const done = await idefactory(dir, ['complete', 'demo', '1.1', '--attempt', attempt.id]);
+    assert.equal(done.code, 0, done.err + done.out);
+    assert.equal(getWorkItem(dir, 'demo', '1.1').status, 'done');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('an unknown verification profile refuses review and completion and is not read as unit', async () => {
+  const dir = tempProject();
+  try {
+    await seedChange(dir, withProfile('no-such-profile'));
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    const attempt = JSON.parse(started.out);
+    await advanceToVerifying(dir, attempt.id, { passChecks: { unit: 0 } });
+    const refused = await idefactory(dir, [
+      'attempt', 'transition', attempt.id, 'awaiting-review', '--evidence', '{}',
+    ]);
+    assert.notEqual(refused.code, 0);
+    assert.match(refused.err, /no-such-profile/);
+    const run = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.match(run.out + run.err, /no-such-profile/);
+    forceAccepted(dir, attempt.id);
+    const done = await idefactory(dir, ['complete', 'demo', '1.1', '--attempt', attempt.id]);
+    assert.notEqual(done.code, 0);
+    assert.match(done.err, /no-such-profile/);
+    assert.equal(getWorkItem(dir, 'demo', '1.1').status, 'in_progress');
   } finally {
     cleanup(dir);
   }

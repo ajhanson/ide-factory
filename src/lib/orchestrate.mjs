@@ -25,6 +25,7 @@ import {
 import { classifyCheckOutcome, isRequiredTestKind, requiredTestKinds, retryKey } from './red-evidence.mjs';
 import { describeException, listAttemptExceptions, redSatisfaction } from './red-exceptions.mjs';
 import { humanGateAllows } from './risk-gates.mjs';
+import { missingChecks } from './required-checks.mjs';
 import { resolveGitBinding, validateCheckRegistry } from './verification-evidence.mjs';
 import { getWorkItem, listWorkItems, selectReady, workCounts } from './work.mjs';
 
@@ -480,6 +481,20 @@ function stageForState(state, item, { project, attempt } = {}) {
         message: 'Implement until green and run verification profile checks.',
       };
     case 'verifying': {
+      if (project && attempt) {
+        const missing = missingChecks(project, attempt, item);
+        if (missing.length) {
+          const commands = missing
+            .map((kind) => `idefactory verify run ${attempt.id} --check ${kind}`)
+            .join('; ');
+          return {
+            needsAgent: true,
+            role: implementer,
+            nextState: 'awaiting-review',
+            message: `Record a passing verify run for: ${missing.join(', ')}. Run ${commands}, then hand off for review.`,
+          };
+        }
+      }
       const needsSecurity = (item.factory?.securityProfile === 'security-sensitive')
         || (item.factory?.checks || []).some((check) => /security|sast|threat|secret|audit/i.test(check));
       if (needsSecurity) {

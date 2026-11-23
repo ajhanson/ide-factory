@@ -199,7 +199,7 @@ async function seedAttempts(dir, count = 1) {
   fs.mkdirSync(path.join(dir, 'openspec/changes/demo'), { recursive: true });
   fs.writeFileSync(
     path.join(dir, 'openspec/changes/demo/tasks.md'),
-    '- [ ] 1.1 Add parser\n  factory:\n    kind: general\n    checks: [unit]\n    verificationProfile: frontend-low\n    roles: [engineer, reviewer, scribe]\n',
+    '- [ ] 1.1 Add parser\n  factory:\n    kind: general\n    checks: [unit]\n    verificationProfile: cli\n    roles: [engineer, reviewer, scribe]\n',
   );
   assert.equal((await idefactory(dir, ['sync-tasks', 'demo'])).code, 0);
   const ids = [];
