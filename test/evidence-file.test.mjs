@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { getAttempt } from '../src/lib/attempt.mjs';
+import { SUPPLIED_EVIDENCE_TYPES, assertSuppliedEvidence, getAttempt } from '../src/lib/attempt.mjs';
 import { readTransitionEvidence } from '../src/lib/evidence-input.mjs';
 import { cleanup, idefactory, repoRoot, tempProject } from './helpers.mjs';
 
@@ -221,7 +221,7 @@ function evidenceFile(dir, evidence, name = 'evidence.json') {
   return file;
 }
 
-const IMPLEMENTING = { implementerId: 'engineer-1', note: 'has "quotes" and spaces' };
+const IMPLEMENTING = { implementerId: 'engineer-1', notes: 'has "quotes" and spaces' };
 
 test('transition with --evidence-file stores the same evidence as inline --evidence', async () => {
   const dir = tempProject();
@@ -491,4 +491,59 @@ test('evidence files in the temp directory carry a full attempt through verify, 
     cleanup(dir);
     fs.rmSync(scratch, { recursive: true, force: true });
   }
+});
+
+test('supported transition evidence keys and their types are pinned', () => {
+  assert.deepEqual(SUPPLIED_EVIDENCE_TYPES, {
+    reviewerId: 'string',
+    implementerId: 'string',
+    securityReviewerId: 'string',
+    verdict: 'string',
+    notes: 'string',
+    changedFiles: 'string[]',
+    baseRev: 'string',
+  });
+});
+
+test('each supported key refuses a value of the wrong type', () => {
+  const review = { state: 'awaiting-review' };
+  const wrong = {
+    reviewerId: 7,
+    implementerId: ['engineer-1'],
+    securityReviewerId: null,
+    verdict: true,
+    notes: { text: 'x' },
+    changedFiles: 'src/a.mjs',
+    baseRev: 12,
+  };
+  for (const [key, value] of Object.entries(wrong)) {
+    assert.throws(
+      () => assertSuppliedEvidence(review, 'rejected', { [key]: value }),
+      (error) => error.message.includes(`"${key}"`),
+      key,
+    );
+  }
+  assert.throws(
+    () => assertSuppliedEvidence(review, 'rejected', { changedFiles: ['ok', 3] }),
+    /"changedFiles" must be an array of strings/,
+  );
+  assert.doesNotThrow(() => assertSuppliedEvidence(review, 'rejected', {
+    reviewerId: 'reviewer-1',
+    notes: 'text',
+    changedFiles: ['src/a.mjs'],
+    baseRev: 'abc123',
+  }));
+});
+
+test('README names each supported evidence key and the top-level notes form', () => {
+  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+  const start = readme.indexOf('### Transition evidence');
+  assert.ok(start >= 0, 'README has a Transition evidence section');
+  const next = readme.indexOf('\n## ', start + 1);
+  const section = readme.slice(start, next >= 0 ? next : undefined);
+  for (const key of Object.keys(SUPPLIED_EVIDENCE_TYPES)) {
+    assert.match(section, new RegExp(`\`${key}\``), `README names ${key}`);
+  }
+  assert.match(section, /"notes"/);
+  assert.match(section, /unsupported evidence key/);
 });

@@ -315,6 +315,7 @@ function handleAttempt(project, parsed, env, out, cwd) {
         evidence,
         actorId: evidence.implementerId || evidence.reviewerId || null,
         env,
+        supplied: true,
       });
     } catch (error) {
       if (String(error?.message || '').startsWith('retry-cap')) {

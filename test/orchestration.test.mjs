@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { attemptPath, getAttempt } from '../src/lib/attempt.mjs';
+import { attemptPath, getAttempt, transitionAttempt } from '../src/lib/attempt.mjs';
 import {
   buildFinalizationPlan,
   createFinalizationJournal,
@@ -1036,3 +1036,147 @@ test('implementing request for a code item with a test kind still asks for a red
 function getWorkItemTaskType(_attemptId, dir) {
   return getWorkItem(dir, 'demo', '1.1').factory.taskType;
 }
+
+async function reachAwaitingReview(dir) {
+  await seedChange(dir);
+  const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+  assert.equal(started.code, 0, started.err);
+  const { id } = JSON.parse(started.out);
+  await advanceToVerifying(dir, id);
+  const ready = await idefactory(dir, [
+    'attempt', 'transition', id, 'awaiting-review', '--evidence', JSON.stringify({}),
+  ]);
+  assert.equal(ready.code, 0, ready.err);
+  return id;
+}
+
+function transitionWith(dir, id, state, evidence) {
+  return idefactory(dir, [
+    'attempt', 'transition', id, state, '--evidence', JSON.stringify(evidence),
+  ]);
+}
+
+async function assertRefusedUnchanged(dir, id, state, evidence, pattern) {
+  const file = attemptPath(dir, id);
+  const before = fs.readFileSync(file, 'utf8');
+  const result = await transitionWith(dir, id, state, evidence);
+  assert.notEqual(result.code, 0, `expected refusal for ${JSON.stringify(evidence)}`);
+  assert.match(result.err, pattern);
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'the attempt file is unchanged');
+}
+
+test('a reviewer rejection with notes nested under review is refused and changes nothing', async () => {
+  const dir = tempProject();
+  try {
+    const id = await reachAwaitingReview(dir);
+    await assertRefusedUnchanged(dir, id, 'rejected', {
+      implementerId: 'engineer-1',
+      reviewerId: 'reviewer-1',
+      review: {
+        verdict: 'REJECT',
+        role: 'reviewer',
+        reviewerId: 'reviewer-1',
+        notes: 'Actionable review findings',
+      },
+    }, /unsupported evidence key "review".*top-level "notes"/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a reviewer rejection with top-level notes stores the notes as the review', async () => {
+  const dir = tempProject();
+  try {
+    const id = await reachAwaitingReview(dir);
+    const result = await transitionWith(dir, id, 'rejected', {
+      reviewerId: 'reviewer-1',
+      verdict: 'REJECT',
+      notes: 'Actionable review findings',
+    });
+    assert.equal(result.code, 0, result.err + result.out);
+    const attempt = getAttempt(dir, id);
+    assert.equal(attempt.state, 'rejected');
+    assert.equal(attempt.evidence.review.notes, 'Actionable review findings');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a reviewer rejection without a verdict is accepted with its notes', async () => {
+  const dir = tempProject();
+  try {
+    const id = await reachAwaitingReview(dir);
+    const result = await transitionWith(dir, id, 'rejected', {
+      reviewerId: 'reviewer-1',
+      notes: 'Missing edge case',
+    });
+    assert.equal(result.code, 0, result.err + result.out);
+    assert.equal(getAttempt(dir, id).evidence.review.notes, 'Missing edge case');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a misspelled evidence key is refused and names the key', async () => {
+  const dir = tempProject();
+  try {
+    const id = await reachAwaitingReview(dir);
+    await assertRefusedUnchanged(dir, id, 'rejected', {
+      reviewerId: 'reviewer-1',
+      note: 'Missing edge case',
+    }, /unsupported evidence key "note"/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('notes as an object and changedFiles as a string are refused with the key named', async () => {
+  const dir = tempProject();
+  try {
+    const id = await reachAwaitingReview(dir);
+    await assertRefusedUnchanged(dir, id, 'rejected', {
+      reviewerId: 'reviewer-1',
+      notes: { text: 'Missing edge case' },
+    }, /"notes" must be a string/);
+    await assertRefusedUnchanged(dir, id, 'rejected', {
+      reviewerId: 'reviewer-1',
+      changedFiles: 'src/lib/attempt.mjs',
+    }, /"changedFiles" must be an array of strings/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a reviewer rejection carrying an ACCEPT verdict is refused', async () => {
+  const dir = tempProject();
+  try {
+    const id = await reachAwaitingReview(dir);
+    await assertRefusedUnchanged(dir, id, 'rejected', {
+      reviewerId: 'reviewer-1',
+      verdict: 'ACCEPT',
+      notes: 'Missing edge case',
+    }, /verdict "ACCEPT" conflicts with the rejected transition/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('internal transitions still record their evidence', async () => {
+  const dir = tempProject();
+  try {
+    await seedChange(dir);
+    const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+    assert.equal(started.code, 0, started.err);
+    const attempt = JSON.parse(started.out);
+    assert.equal(attempt.state, 'assigned');
+
+    await acceptAttempt(dir, attempt.id);
+    const failed = transitionAttempt(dir, attempt.id, 'finalize-failed', {
+      evidence: { error: 'commit refused' },
+    });
+    assert.equal(failed.state, 'finalize-failed');
+    assert.equal(getAttempt(dir, attempt.id).state, 'finalize-failed');
+  } finally {
+    cleanup(dir);
+  }
+});

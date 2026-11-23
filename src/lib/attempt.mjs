@@ -93,10 +93,21 @@ export function startAttempt(project, change, taskId, { role = 'engineer', model
   });
 }
 
+export const SUPPLIED_EVIDENCE_TYPES = {
+  reviewerId: 'string',
+  implementerId: 'string',
+  securityReviewerId: 'string',
+  verdict: 'string',
+  notes: 'string',
+  changedFiles: 'string[]',
+  baseRev: 'string',
+};
+
 export function transitionAttempt(project, attemptId, nextState, {
   evidence = {},
   actorId = null,
   env = process.env,
+  supplied = false,
 } = {}) {
   const attempt = getAttempt(project, attemptId);
   if (!attempt) throw new Error(`Attempt not found: ${attemptId}`);
@@ -106,6 +117,7 @@ export function transitionAttempt(project, attemptId, nextState, {
   }
   // Reject check-result payloads before any mutation so the attempt file stays unchanged.
   rejectCallerSuppliedCheckResults(evidence);
+  if (supplied) assertSuppliedEvidence(attempt, nextState, evidence);
   validateEvidence(project, attempt, nextState, evidence);
   if (nextState === 'rejected' && (attempt.state === 'awaiting-review' || attempt.state === 'security-checking')) {
     const key = retryKey('review-rejection');
@@ -179,6 +191,38 @@ function securityHandoffVerdict(attempt, nextState, evidence) {
 function securityReviewerIdFrom(evidence) {
   if (typeof evidence?.securityReviewerId !== 'string') return '';
   return evidence.securityReviewerId.trim();
+}
+
+/**
+ * Refuse evidence from the command line that the transition would silently ignore:
+ * unsupported keys, values of the wrong type, and a reviewer verdict that contradicts
+ * the transition. Runs before any write.
+ */
+export function assertSuppliedEvidence(attempt, nextState, evidence) {
+  for (const [key, value] of Object.entries(evidence)) {
+    if (!Object.prototype.hasOwnProperty.call(SUPPLIED_EVIDENCE_TYPES, key)) {
+      if (key === 'review') {
+        throw new Error('unsupported evidence key "review"; put review text in top-level "notes"');
+      }
+      throw new Error(`unsupported evidence key "${key}"`);
+    }
+    const type = SUPPLIED_EVIDENCE_TYPES[key];
+    if (type === 'string' && typeof value !== 'string') {
+      throw new Error(`evidence key "${key}" must be a string`);
+    }
+    if (type === 'string[]' && !(Array.isArray(value) && value.every((item) => typeof item === 'string'))) {
+      throw new Error(`evidence key "${key}" must be an array of strings`);
+    }
+  }
+  if (attempt.state === 'awaiting-review' && (nextState === 'accepted' || nextState === 'rejected')) {
+    const expected = nextState === 'accepted' ? 'ACCEPT' : 'REJECT';
+    const verdict = typeof evidence.verdict === 'string' ? evidence.verdict.trim().toUpperCase() : '';
+    if (verdict && verdict !== expected) {
+      throw new Error(
+        `verdict "${evidence.verdict}" conflicts with the ${nextState} transition; send ${expected} or omit verdict`,
+      );
+    }
+  }
 }
 
 function rejectCallerSuppliedCheckResults(evidence) {

@@ -161,6 +161,15 @@ Mutating commands take a single writer lease at `.factory/orchestration/writer.l
 - `--evidence <json>` takes inline JSON.
 - `--evidence-file <path>` takes the path of a file that holds a JSON object. It never takes inline JSON. A relative path resolves from the current directory. The file is read as UTF-8, and a UTF-8 byte-order mark or a UTF-16LE file with a byte-order mark is also accepted. The CLI does not modify or delete the file.
 
+Evidence may contain only these keys. The review text goes in the top-level `notes` key, not nested under `review`:
+
+- `reviewerId`, `implementerId`, and `securityReviewerId` are strings.
+- `verdict` is a string. A reviewer's `accepted` or `rejected` transition refuses a verdict that contradicts it; omit `verdict` or send the matching one.
+- `notes` is a string. It is stored as the review notes for a reviewer's accept or reject.
+- `changedFiles` is an array of strings, and `baseRev` is a string.
+
+Any other key, or a value of the wrong type, fails with an error that names it, and the attempt file is not changed. For example, `{"reviewerId":"reviewer-1","review":{"notes":"..."}}` fails with `unsupported evidence key "review"; put review text in top-level "notes"`.
+
 Windows PowerShell 5.1 strips the quotation marks from JSON passed as a native command argument, which produces `Expected property name or '}' in JSON`. Use the file flag there, and anywhere else you want to avoid shell quoting. Write the file to the operating system temporary directory, not inside the project, because an untracked file in the project makes the worktree dirty and blocks verification and completion. Remove it afterward whether the command succeeds or fails:
 
 ```powershell
