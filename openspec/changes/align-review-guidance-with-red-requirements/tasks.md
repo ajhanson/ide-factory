@@ -15,7 +15,7 @@
 
 ## 4. Run request
 
-- [ ] 4.1 Add failing tests in `test/orchestration.test.mjs` that the implementing-stage request for a `code` attempt whose checks are `build` says a failing test is not required and names `verifying` as the next state, and that a `code` attempt with `unit` and no red or exception still asks for a red with next state `red-confirmed`. Change `stageForState` in `src/lib/orchestrate.mjs`. Verify with `node --test test/orchestration.test.mjs test/run-session.test.mjs test/red-exceptions.test.mjs`.
+- [x] 4.1 Add failing tests in `test/orchestration.test.mjs` that the implementing-stage request for a `code` attempt whose checks are `build` says a failing test is not required and names `verifying` as the next state, and that a `code` attempt with `unit` and no red or exception still asks for a red with next state `red-confirmed`. Change `stageForState` in `src/lib/orchestrate.mjs`. Verify with `node --test test/orchestration.test.mjs test/run-session.test.mjs test/red-exceptions.test.mjs`.
 
 ## 5. Integration
 
