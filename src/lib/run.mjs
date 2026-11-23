@@ -12,6 +12,7 @@ import { buildPacket, syncTasks } from './queue.mjs';
 import { scaffoldConsumerCi } from './ci-scaffold.mjs';
 import { capturePullRequestComments, commentOnPullRequest, openPullRequest } from './pull-request.mjs';
 import { mapsFromSequence, setupProject, setupReadinessErrors } from './setup.mjs';
+import { TRANSITION_USAGE, readTransitionEvidence } from './evidence-input.mjs';
 import { reuseRed, waiveRed } from './red-exceptions.mjs';
 import { verifyImport, verifyRun } from './verification-evidence.mjs';
 import { cliCommandKey, isMutatingCommand, withWriterLease } from './writer-lease.mjs';
@@ -34,7 +35,7 @@ Usage:
   idefactory next [--change name] [--path dir]
   idefactory run --change <name> [--until human-gate] [--max-tasks N] [--max-agent-steps N] [--new-run] [--accept-baseline] [--path dir]
   idefactory attempt start <change> <taskId> [--path dir]
-  idefactory attempt transition <attemptId> <state> [--evidence json] [--path dir]
+  idefactory attempt transition <attemptId> <state> [--evidence json | --evidence-file path] [--path dir]
   idefactory attempt show <attemptId> [--path dir]
   idefactory verify run <attemptId> --check <kind> [--red]
   idefactory verify import <attemptId> --file <path>
@@ -81,6 +82,7 @@ export async function run(argv, io = {}) {
     out,
     err,
     isTTY,
+    cwd,
   });
   try {
     // HALT bypasses the writer lease so emergency stop cannot be blocked.
@@ -102,7 +104,7 @@ export async function run(argv, io = {}) {
 }
 
 async function dispatchCommand(cmd, ctx) {
-  const { project, parsed, env, out, err, isTTY } = ctx;
+  const { project, parsed, env, out, err, isTTY, cwd } = ctx;
   switch (cmd) {
     case 'init': {
       const created = initProject(project, {
@@ -168,7 +170,7 @@ async function dispatchCommand(cmd, ctx) {
       return result.code === EXIT_NEEDS_AGENT ? EXIT_NEEDS_AGENT : result.code;
     }
     case 'attempt':
-      return handleAttempt(project, parsed, env, out);
+      return handleAttempt(project, parsed, env, out, cwd);
     case 'verify':
       return await handleVerify(project, parsed, out);
     case 'red':
@@ -250,7 +252,7 @@ async function dispatchCommand(cmd, ctx) {
   }
 }
 
-function handleAttempt(project, parsed, env, out) {
+function handleAttempt(project, parsed, env, out, cwd) {
   if (halted(project) && parsed.rest[0] !== 'show') {
     throw new Error('HALT file present. Factory commands are stopped. Remove it with idefactory resume.');
   }
@@ -267,14 +269,9 @@ function handleAttempt(project, parsed, env, out) {
     const attemptId = parsed.rest[1];
     const state = parsed.rest[2];
     if (!attemptId || !state) {
-      throw new Error('Usage: idefactory attempt transition <attemptId> <state> [--evidence json]');
+      throw new Error(TRANSITION_USAGE);
     }
-    let evidence = {};
-    if (parsed.flags.evidence) {
-      evidence = typeof parsed.flags.evidence === 'string'
-        ? JSON.parse(parsed.flags.evidence)
-        : parsed.flags.evidence;
-    }
+    const evidence = readTransitionEvidence(parsed.flags, { cwd });
     let attempt;
     try {
       attempt = transitionAttempt(project, attemptId, state, {

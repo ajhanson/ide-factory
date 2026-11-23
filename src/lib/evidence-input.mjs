@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 export const TRANSITION_USAGE = 'Usage: idefactory attempt transition <attemptId> <state> [--evidence json | --evidence-file path]';
 
@@ -9,10 +10,12 @@ const UTF16LE_BOM = Buffer.from([0xff, 0xfe]);
  * Resolve attempt transition evidence from `--evidence <json>` or
  * `--evidence-file <path>`. Exactly one source may be given. Any failure
  * throws before the caller changes attempt state.
+ * A relative file path resolves from `cwd`.
  * @param {Record<string, string|boolean|undefined>} flags
+ * @param {{ cwd?: string }} [options]
  * @returns {object}
  */
-export function readTransitionEvidence(flags) {
+export function readTransitionEvidence(flags, { cwd = process.cwd() } = {}) {
   const inline = flags.evidence;
   const file = flags['evidence-file'];
   if (inline === true || file === true || file === '') {
@@ -23,7 +26,7 @@ export function readTransitionEvidence(flags) {
   if (hasInline && hasFile) {
     throw new Error('attempt transition accepts only one of --evidence and --evidence-file; remove one.');
   }
-  if (hasFile) return readEvidenceFile(file);
+  if (hasFile) return readEvidenceFile(file, cwd);
   if (hasInline) return parseInline(inline);
   return {};
 }
@@ -38,10 +41,11 @@ function parseInline(text) {
   }
 }
 
-function readEvidenceFile(file) {
+function readEvidenceFile(file, cwd) {
+  const resolved = path.resolve(cwd, file);
   let stat;
   try {
-    stat = fs.statSync(file);
+    stat = fs.statSync(resolved);
   } catch (error) {
     if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
       throw new Error(
@@ -54,7 +58,7 @@ function readEvidenceFile(file) {
 
   let bytes;
   try {
-    bytes = fs.readFileSync(file);
+    bytes = fs.readFileSync(resolved);
   } catch (error) {
     throw new Error(`cannot read evidence file ${file}: ${error.message}`);
   }

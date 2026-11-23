@@ -7,7 +7,7 @@
 
 ## 2. CLI wiring
 
-- [ ] 2.1 Add failing CLI tests that `attempt transition` with `--evidence-file` produces the same stored attempt as the same evidence passed inline, that both flags together exit non-zero and leave the attempt file byte-identical, that a missing, empty, and malformed file each exit non-zero and leave the attempt byte-identical, that a caller-supplied verification result in the file is rejected like inline evidence, that the file still exists afterward on success and failure, and that existing inline `--evidence` calls behave as before. Replace the inline parse in `src/lib/run.mjs` with `readTransitionEvidence`, and change the help line and the usage error to show `[--evidence json | --evidence-file path]`. Verify with `node --test test/evidence-file.test.mjs test/orchestration.test.mjs test/review-comment.test.mjs test/writer-lease.test.mjs`.
+- [x] 2.1 Add failing CLI tests that `attempt transition` with `--evidence-file` produces the same stored attempt as the same evidence passed inline, that both flags together exit non-zero and leave the attempt file byte-identical, that a missing, empty, and malformed file each exit non-zero and leave the attempt byte-identical, that a caller-supplied verification result in the file is rejected like inline evidence, that the file still exists afterward on success and failure, and that existing inline `--evidence` calls behave as before. Replace the inline parse in `src/lib/run.mjs` with `readTransitionEvidence`, and change the help line and the usage error to show `[--evidence json | --evidence-file path]`. Verify with `node --test test/evidence-file.test.mjs test/orchestration.test.mjs test/review-comment.test.mjs test/writer-lease.test.mjs`.
 
 ## 3. Packet, skills, and docs
 
