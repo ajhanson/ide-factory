@@ -196,24 +196,36 @@ export function readManifest(project) {
   return parsed;
 }
 
-/**
- * Writes the manifest through a temporary file in the same directory and a rename.
- * @param {string} project
- * @param {{ files: Record<string, object> }} manifest
- */
-export function writeManifest(project, manifest) {
-  const file = manifestPath(project);
+function manifestBody(manifest) {
   const files = {};
   for (const key of Object.keys(manifest.files).sort()) files[key] = manifest.files[key];
-  const body = `${JSON.stringify({ version: MANIFEST_VERSION, tool: toolVersion(), files }, null, 2)}\n`;
+  return `${JSON.stringify({ version: MANIFEST_VERSION, tool: toolVersion(), files }, null, 2)}\n`;
+}
+
+/** Write a file through a temporary file in the same directory and a rename. */
+export function atomicWrite(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.idefactory-tmp`);
   try {
-    fs.writeFileSync(temp, body);
+    fs.writeFileSync(temp, text);
     fs.renameSync(temp, file);
   } finally {
     fs.rmSync(temp, { force: true });
   }
+}
+
+/**
+ * Writes the manifest through a temporary file in the same directory and a rename.
+ * @param {string} project
+ * @param {{ files: Record<string, object> }} manifest
+ * @returns {boolean} whether the file changed
+ */
+export function writeManifest(project, manifest) {
+  const file = manifestPath(project);
+  const body = manifestBody(manifest);
+  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === body) return false;
+  atomicWrite(file, body);
+  return true;
 }
 
 /**
@@ -409,4 +421,57 @@ export function planAdapters(project, options = {}) {
   for (const key of Object.keys(manifest.files).sort()) consider(key, 'manifest');
   for (const key of Object.keys(history.files).sort()) consider(key, 'history');
   return { files, orphans, drop, manifest };
+}
+
+const COUNT_KEYS = ['current', 'updated', 'created', 'preserved', 'replaced', 'pinned', 'malformed'];
+
+export function emptySummary() {
+  const summary = { orphan: 0 };
+  for (const key of COUNT_KEYS) summary[key] = 0;
+  return summary;
+}
+
+function textFor(item) {
+  if (item.scope === 'section') return renderSectionInto(item);
+  if (item.status === 'update' && item.localText !== null) {
+    return withEol(item.content, detectEol(item.localText));
+  }
+  return item.content;
+}
+
+/**
+ * Apply a plan: write created and updated files, then the manifest.
+ * A preserved or malformed file is never written.
+ * @param {string} project
+ * @param {ReturnType<typeof planAdapters>} plan
+ */
+export function applyPlan(project, plan) {
+  const manifest = { version: MANIFEST_VERSION, files: {} };
+  for (const [key, value] of Object.entries(plan.manifest.files)) manifest.files[key] = { ...value };
+  const summary = emptySummary();
+  const files = [];
+
+  for (const item of plan.files) {
+    let action = item.status;
+    if (item.status === 'create' || item.status === 'update') {
+      atomicWrite(path.join(project, item.path), textFor(item));
+      manifest.files[item.key] = { digest: item.rendering };
+      summary[item.status === 'create' ? 'created' : 'updated'] += 1;
+    } else if (item.status === 'current') {
+      manifest.files[item.key] = { ...(manifest.files[item.key] || {}), digest: item.rendering };
+      delete manifest.files[item.key].pinned;
+      summary.current += 1;
+    } else if (item.status === 'pinned') {
+      summary.pinned += 1;
+    } else if (item.status === 'malformed') {
+      summary.malformed += 1;
+    } else {
+      summary.preserved += 1;
+    }
+    files.push({ ...item, action });
+  }
+  for (const key of plan.drop) delete manifest.files[key];
+  summary.orphan = plan.orphans.length;
+  const manifestChanged = writeManifest(project, manifest);
+  return { files, orphans: plan.orphans, summary, manifestChanged };
 }
