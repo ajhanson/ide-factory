@@ -317,6 +317,7 @@ function planSection(project, item, manifest, history) {
     localText: local.text,
     mode: 'replace',
     range: [found.start, found.end],
+    localBlock: `${local.text.slice(found.start, found.end)}\n`,
   };
 }
 
@@ -474,4 +475,148 @@ export function applyPlan(project, plan) {
   summary.orphan = plan.orphans.length;
   const manifestChanged = writeManifest(project, manifest);
   return { files, orphans: plan.orphans, summary, manifestChanged };
+}
+
+function splitLines(text) {
+  const lf = String(text).replace(/\r\n/g, '\n');
+  if (lf === '') return [];
+  const lines = lf.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+function diffOps(a, b) {
+  const n = a.length;
+  const m = b.length;
+  if (n * m > 25_000_000) {
+    return [
+      ...a.map((text, i) => ({ t: '-', text, oldNo: i + 1 })),
+      ...b.map((text, i) => ({ t: '+', text, newNo: i + 1 })),
+    ];
+  }
+  const width = m + 1;
+  const table = new Uint32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      table[i * width + j] = a[i] === b[j]
+        ? table[(i + 1) * width + j + 1] + 1
+        : Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ t: ' ', text: a[i], oldNo: i + 1, newNo: j + 1 });
+      i += 1;
+      j += 1;
+    } else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) {
+      ops.push({ t: '-', text: a[i], oldNo: i + 1 });
+      i += 1;
+    } else {
+      ops.push({ t: '+', text: b[j], newNo: j + 1 });
+      j += 1;
+    }
+  }
+  while (i < n) {
+    ops.push({ t: '-', text: a[i], oldNo: i + 1 });
+    i += 1;
+  }
+  while (j < m) {
+    ops.push({ t: '+', text: b[j], newNo: j + 1 });
+    j += 1;
+  }
+  return ops;
+}
+
+/**
+ * Unified diff of two texts, line based. Line endings are ignored.
+ * @returns {string} empty when the texts are equal
+ */
+export function unifiedDiff(oldText, newText, options = {}) {
+  const { oldLabel = 'local', newLabel = 'incoming', context = 3 } = options;
+  const ops = diffOps(splitLines(oldText), splitLines(newText));
+  const changed = [];
+  ops.forEach((op, index) => {
+    if (op.t !== ' ') changed.push(index);
+  });
+  if (changed.length === 0) return '';
+  const ranges = [];
+  for (const index of changed) {
+    const start = Math.max(0, index - context);
+    const end = Math.min(ops.length - 1, index + context);
+    const last = ranges[ranges.length - 1];
+    if (last && start <= last[1] + 1) last[1] = Math.max(last[1], end);
+    else ranges.push([start, end]);
+  }
+  const out = [`--- ${oldLabel}`, `+++ ${newLabel}`];
+  for (const [start, end] of ranges) {
+    const before = ops.slice(0, start);
+    const hunk = ops.slice(start, end + 1);
+    const oldBefore = before.filter((op) => op.t !== '+').length;
+    const newBefore = before.filter((op) => op.t !== '-').length;
+    const oldCount = hunk.filter((op) => op.t !== '+').length;
+    const newCount = hunk.filter((op) => op.t !== '-').length;
+    const oldStart = oldCount === 0 ? oldBefore : oldBefore + 1;
+    const newStart = newCount === 0 ? newBefore : newBefore + 1;
+    out.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
+    for (const op of hunk) out.push(`${op.t}${op.text}`);
+  }
+  return `${out.join('\n')}\n`;
+}
+
+export function upgradeDir(project) {
+  return path.join(project, '.factory', 'upgrade');
+}
+
+/** Create a fresh run directory named for the UTC time, never reusing a name. */
+export function createRun(project, now = new Date()) {
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  fs.mkdirSync(upgradeDir(project), { recursive: true });
+  for (let attempt = 1; ; attempt += 1) {
+    const runId = attempt === 1 ? stamp : `${stamp}-${attempt}`;
+    const runDir = path.join(upgradeDir(project), runId);
+    try {
+      fs.mkdirSync(runDir);
+      return { runId, runDir, rel: `.factory/upgrade/${runId}` };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+}
+
+function writeStaged(runDir, rel, text) {
+  const file = path.join(runDir, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+}
+
+/**
+ * Save the incoming rendering and a diff for every preserved file.
+ * @returns {null | { runId: string, runDir: string, rel: string, files: Map<string, { incoming: string, diff: string|null }> }}
+ */
+export function stageConflicts(project, plan, options = {}) {
+  const preserved = plan.files.filter((item) => item.status === 'preserved');
+  if (preserved.length === 0) return null;
+  const run = createRun(project, options.now);
+  const files = new Map();
+  for (const item of preserved) {
+    const incomingRel = `incoming/${item.path}`;
+    writeStaged(run.runDir, incomingRel, item.content);
+    let diffRel = null;
+    const local = item.scope === 'section' ? item.localBlock : item.localText;
+    if (typeof local === 'string') {
+      diffRel = `diffs/${item.path}.diff`;
+      writeStaged(run.runDir, diffRel, unifiedDiff(local, item.content, {
+        oldLabel: `local/${item.path}`,
+        newLabel: `incoming/${item.path}`,
+      }));
+    }
+    files.set(item.key, {
+      incoming: `${run.rel}/${incomingRel}`,
+      diff: diffRel ? `${run.rel}/${diffRel}` : null,
+    });
+  }
+  return { ...run, files };
 }

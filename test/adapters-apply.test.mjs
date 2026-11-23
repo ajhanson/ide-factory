@@ -8,6 +8,8 @@ import {
   planAdapters,
   readManifest,
   renderAdapters,
+  stageConflicts,
+  unifiedDiff,
 } from '../src/lib/adapters.mjs';
 import { cleanup, tempProject } from './helpers.mjs';
 import {
@@ -172,6 +174,105 @@ test('applyPlan creates instruction files and replaces only the marked block', (
     assert.match(agents, /<!-- idefactory:start -->[\s\S]*<!-- idefactory:end -->/);
     assert.ok(fs.existsSync(path.join(dir, 'CLAUDE.md')));
     assert.ok(fs.existsSync(path.join(dir, '.github/copilot-instructions.md')));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('unifiedDiff is empty for equal text and ignores line endings', () => {
+  assert.equal(unifiedDiff('a\nb\n', 'a\nb\n'), '');
+  assert.equal(unifiedDiff('a\r\nb\r\n', 'a\nb\n'), '');
+});
+
+test('unifiedDiff shows removed and added lines with context and hunk headers', () => {
+  const oldText = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'].join('\n') + '\n';
+  const newText = oldText.replace('five\n', 'FIVE\nextra\n');
+  const diff = unifiedDiff(oldText, newText, { oldLabel: 'local/x.md', newLabel: 'incoming/x.md' });
+  const lines = diff.split('\n');
+  assert.equal(lines[0], '--- local/x.md');
+  assert.equal(lines[1], '+++ incoming/x.md');
+  assert.equal(lines[2], '@@ -2,7 +2,8 @@');
+  assert.ok(lines.includes('-five'));
+  assert.ok(lines.includes('+FIVE'));
+  assert.ok(lines.includes('+extra'));
+  assert.ok(lines.includes(' four'));
+  assert.ok(!lines.includes(' one'), 'only three lines of context');
+});
+
+test('unifiedDiff handles added and removed whole files', () => {
+  assert.match(unifiedDiff('', 'a\nb\n'), /@@ -0,0 \+1,2 @@\n\+a\n\+b\n$/);
+  assert.match(unifiedDiff('a\nb\n', ''), /@@ -1,2 \+0,0 @@\n-a\n-b\n$/);
+});
+
+test('stageConflicts saves the incoming rendering and a diff for each preserved file', () => {
+  const { dir, history } = legacyProject();
+  const templates = changedTemplates();
+  try {
+    const edited = '.cursor/commands/factory-review.md';
+    fs.appendFileSync(path.join(dir, edited), '\nPROJECT RULE\n');
+    const plan = planAdapters(dir, { templates, history });
+    const staged = stageConflicts(dir, plan, { now: new Date('2026-11-23T17:00:00Z') });
+    assert.equal(staged.runId, '20261123T170000Z');
+    const entry = staged.files.get(edited);
+    assert.equal(entry.incoming, `.factory/upgrade/20261123T170000Z/incoming/${edited}`);
+    assert.equal(entry.diff, `.factory/upgrade/20261123T170000Z/diffs/${edited}.diff`);
+    const incoming = fs.readFileSync(path.join(dir, entry.incoming), 'utf8');
+    assert.match(incoming, /NEW REVIEW LINE/);
+    const diff = fs.readFileSync(path.join(dir, entry.diff), 'utf8');
+    assert.match(diff, /^--- local\//m);
+    assert.match(diff, /^-PROJECT RULE$/m);
+    assert.match(diff, /^\+NEW REVIEW LINE$/m);
+  } finally {
+    removeDir(templates);
+    cleanup(dir);
+  }
+});
+
+test('stageConflicts creates no run directory when nothing is preserved', () => {
+  const dir = tempProject();
+  try {
+    const staged = stageConflicts(dir, planAdapters(dir));
+    assert.equal(staged, null);
+    assert.equal(fs.existsSync(path.join(dir, '.factory/upgrade')), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('stageConflicts never reuses a run id', () => {
+  const { dir, history } = legacyProject();
+  const templates = changedTemplates();
+  try {
+    fs.appendFileSync(path.join(dir, '.cursor/commands/factory-review.md'), '\nPROJECT RULE\n');
+    const plan = planAdapters(dir, { templates, history });
+    const now = new Date('2026-11-23T17:00:00Z');
+    const first = stageConflicts(dir, plan, { now });
+    const second = stageConflicts(dir, plan, { now });
+    assert.notEqual(first.runId, second.runId);
+    assert.ok(fs.existsSync(first.runDir) && fs.existsSync(second.runDir));
+  } finally {
+    removeDir(templates);
+    cleanup(dir);
+  }
+});
+
+test('stageConflicts stages a preserved instruction section as the block', () => {
+  const dir = tempProject();
+  try {
+    const block = renderAdapters(dir).find((item) => item.key === 'AGENTS.md#section').content;
+    fs.writeFileSync(
+      path.join(dir, 'AGENTS.md'),
+      `# Project\n\n${block.replace('## IDE Factory', '## Our factory')}\nTail\n`,
+    );
+    const plan = planAdapters(dir, { history: { version: 1, files: {} } });
+    const staged = stageConflicts(dir, plan);
+    const entry = staged.files.get('AGENTS.md#section');
+    const incoming = fs.readFileSync(path.join(dir, entry.incoming), 'utf8');
+    assert.equal(incoming, block);
+    const diff = fs.readFileSync(path.join(dir, entry.diff), 'utf8');
+    assert.match(diff, /^-## Our factory$/m);
+    assert.match(diff, /^\+## IDE Factory$/m);
+    assert.ok(!diff.includes('Tail'));
   } finally {
     cleanup(dir);
   }
