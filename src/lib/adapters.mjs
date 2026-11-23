@@ -158,3 +158,73 @@ export function renderAdapters(project, options = {}) {
 
   return entries;
 }
+
+const MANIFEST_VERSION = 1;
+
+export function manifestPath(project) {
+  return path.join(project, '.factory', 'adapters.json');
+}
+
+function toolVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(templatesRoot), 'package.json'), 'utf8'));
+    return String(pkg.version || '0.0.0');
+  } catch {
+    return '0.0.0';
+  }
+}
+
+/**
+ * @param {string} project
+ * @returns {{ version: number, tool?: string, files: Record<string, { digest: string, pinned?: boolean }> }}
+ */
+export function readManifest(project) {
+  const file = manifestPath(project);
+  if (!fs.existsSync(file)) return { version: MANIFEST_VERSION, files: {} };
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Cannot read .factory/adapters.json: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || parsed.version !== MANIFEST_VERSION) {
+    throw new Error(`.factory/adapters.json has an unsupported version (expected ${MANIFEST_VERSION}).`);
+  }
+  if (!parsed.files || typeof parsed.files !== 'object' || Array.isArray(parsed.files)) {
+    throw new Error('.factory/adapters.json must hold a "files" object.');
+  }
+  return parsed;
+}
+
+/**
+ * Writes the manifest through a temporary file in the same directory and a rename.
+ * @param {string} project
+ * @param {{ files: Record<string, object> }} manifest
+ */
+export function writeManifest(project, manifest) {
+  const file = manifestPath(project);
+  const files = {};
+  for (const key of Object.keys(manifest.files).sort()) files[key] = manifest.files[key];
+  const body = `${JSON.stringify({ version: MANIFEST_VERSION, tool: toolVersion(), files }, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, body);
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+
+/**
+ * Decide what to do with one generated file.
+ * @param {{ local: string|null, rendering: string, baseline?: string|null, history?: string[], pinned?: boolean }} input
+ * @returns {{ status: 'pinned'|'create'|'current'|'update'|'preserved', upstreamChanged?: boolean }}
+ */
+export function classify({ local, rendering, baseline = null, history = [], pinned = false }) {
+  if (pinned) return { status: 'pinned', upstreamChanged: rendering !== baseline };
+  if (local === null || local === undefined) return { status: 'create' };
+  if (local === rendering) return { status: 'current' };
+  if (local === baseline || history.includes(local)) return { status: 'update' };
+  return { status: 'preserved' };
+}
