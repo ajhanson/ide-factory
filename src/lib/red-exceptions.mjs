@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { attemptPath, getAttempt } from './attempt.mjs';
-import { attestationFailureReason } from './complete.mjs';
+import { attestationFailureReason } from './required-checks.mjs';
 import { confirmPrincipal, readPolicyVersion } from './principal.mjs';
 import { appendControlEvent } from './event-log.mjs';
 import { ledger, readText, writeText } from './layout.mjs';
