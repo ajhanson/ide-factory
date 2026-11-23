@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -385,5 +386,109 @@ test('README and help document both evidence flags', async () => {
     assert.match(help.out, /--evidence json \| --evidence-file path/);
   } finally {
     cleanup(dir);
+  }
+});
+
+function git(cwd, args) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    shell: false,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'idefactory-test',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'idefactory-test',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result.stdout.trim();
+}
+
+function commitAll(dir) {
+  if (!fs.existsSync(path.join(dir, '.git'))) {
+    git(dir, ['init']);
+    git(dir, ['config', 'user.email', 'test@example.com']);
+    git(dir, ['config', 'user.name', 'idefactory-test']);
+  }
+  fs.writeFileSync(path.join(dir, '.gitignore'), [
+    '.factory/attempts/*',
+    '!.factory/attempts/.gitkeep',
+    '.factory/work/',
+    '.factory/ledger.jsonl',
+    '.factory/orchestration/*',
+    '!.factory/orchestration/.gitkeep',
+    '',
+  ].join('\n'));
+  git(dir, ['add', '-A']);
+  if (git(dir, ['status', '--porcelain']).length > 0) git(dir, ['commit', '-m', 'checkpoint']);
+}
+
+function utf8BomBytes(value) {
+  return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(value), 'utf8')]);
+}
+
+function utf16leBytes(value) {
+  return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify(value), 'utf16le')]);
+}
+
+test('evidence files in the temp directory carry a full attempt through verify, review, and complete', async () => {
+  const dir = tempProject();
+  const scratch = tempDir();
+  try {
+    assert.equal(path.relative(dir, scratch).startsWith('..'), true, 'evidence files live outside the project');
+    const [id] = await seedAttempts(dir);
+    const configPath = path.join(dir, '.factory/config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.governance.policyVersion = 1;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    fs.writeFileSync(path.join(dir, '.factory/checks.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      checks: {
+        unit: {
+          argv: [process.execPath, '-e', "process.exit(require('fs').existsSync('fixed.flag') ? 0 : 1)"],
+          cwdPolicy: 'project',
+          timeoutMs: 30_000,
+          artifacts: [],
+        },
+      },
+    }, null, 2)}\n`);
+    commitAll(dir);
+
+    const transition = async (state, file) => idefactory(dir, [
+      'attempt', 'transition', id, state, ...(file ? ['--evidence-file', file] : []),
+    ]);
+    const bomFile = path.join(scratch, 'implementing.json');
+    fs.writeFileSync(bomFile, utf8BomBytes({ implementerId: 'engineer-1' }));
+    const implementing = await transition('implementing', bomFile);
+    assert.equal(implementing.code, 0, implementing.err);
+
+    const red = await idefactory(dir, ['verify', 'run', id, '--check', 'unit', '--red']);
+    assert.equal(red.code, 0, red.err + red.out);
+    fs.writeFileSync(path.join(dir, 'fixed.flag'), 'fixed\n');
+    commitAll(dir);
+    const green = await idefactory(dir, ['verify', 'run', id, '--check', 'unit']);
+    assert.equal(green.code, 0, green.err + green.out);
+    assert.equal((await transition('verifying')).code, 0);
+    assert.equal((await transition('awaiting-review')).code, 0);
+
+    const reviewFile = path.join(scratch, 'review.json');
+    fs.writeFileSync(reviewFile, utf16leBytes({
+      reviewerId: 'reviewer-1',
+      verdict: 'ACCEPT',
+      notes: 'He said "ship it" — café',
+    }));
+    const accepted = await transition('accepted', reviewFile);
+    assert.equal(accepted.code, 0, accepted.err);
+    assert.equal(getAttempt(dir, id).evidence.review.notes, 'He said "ship it" — café');
+
+    const done = await idefactory(dir, ['complete', 'demo', '1.1', '--attempt', id]);
+    assert.equal(done.code, 0, done.err + done.out);
+    assert.equal(getAttempt(dir, id).state, 'finalized');
+    assert.equal(fs.existsSync(bomFile) && fs.existsSync(reviewFile), true, 'the CLI never deletes the files');
+  } finally {
+    cleanup(dir);
+    fs.rmSync(scratch, { recursive: true, force: true });
   }
 });

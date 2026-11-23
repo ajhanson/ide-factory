@@ -17,7 +17,7 @@
 
 ## 4. Integration
 
-- [ ] 4.1 Run `npx openspec validate evidence-file-for-attempt-transitions --strict`, `npm test`, and `node src/cli.mjs doctor`. Add a CLI test that runs a reviewer verdict through `--evidence-file` from a temporary directory outside the project, on a UTF-8 BOM file and on a UTF-16LE file, and that `verify run` and `complete` still succeed afterward. Record the results in `implementation-notes.md` in the change directory. Verify with `node --test test/evidence-file.test.mjs`.
+- [x] 4.1 Run `npx openspec validate evidence-file-for-attempt-transitions --strict`, `npm test`, and `node src/cli.mjs doctor`. Add a CLI test that runs a reviewer verdict through `--evidence-file` from a temporary directory outside the project, on a UTF-8 BOM file and on a UTF-16LE file, and that `verify run` and `complete` still succeed afterward. Record the results in `implementation-notes.md` in the change directory. Verify with `node --test test/evidence-file.test.mjs`.
 
 ## Workflow follow-up
 
