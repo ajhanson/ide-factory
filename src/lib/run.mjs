@@ -6,6 +6,7 @@ import { approve, createLockout, doctor, reject, resolveLockout, status } from '
 import { buildStatusDocument } from './read-model.mjs';
 import { previewChecks } from './checks-preview.mjs';
 import { formatReport } from './adapter-sync.mjs';
+import { setPins } from './adapters.mjs';
 import { initProject, upgradeProject } from './install.mjs';
 import { halted, projectDir } from './layout.mjs';
 import { EXIT_NEEDS_AGENT, runFactory } from './orchestrate.mjs';
@@ -145,6 +146,19 @@ async function dispatchCommand(cmd, ctx) {
       for (const line of formatReport(sync.report)) out(line);
       if (!dryRun) reportSetupGaps(project, out);
       return sync.report.exitCode;
+    }
+    case 'adapters': {
+      const mode = parsed.rest[0];
+      const paths = parsed.rest.slice(1);
+      if ((mode !== 'pin' && mode !== 'unpin') || paths.length === 0) {
+        throw new Error(
+          'Usage: idefactory adapters pin <path>... | idefactory adapters unpin <path>... [--path dir]',
+        );
+      }
+      const { done, notes } = setPins(project, paths, mode);
+      for (const rel of done) out(`${mode === 'pin' ? 'Pinned' : 'Unpinned'} ${rel}`);
+      for (const note of notes) out(`note: ${note}`);
+      return 0;
     }
     case 'setup':
       return handleSetup(project, parsed, out, isTTY);

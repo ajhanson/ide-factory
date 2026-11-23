@@ -686,3 +686,42 @@ export function stageConflicts(project, plan, options = {}) {
   }
   return { ...run, files };
 }
+
+/**
+ * Pin or unpin generated files in the manifest. Writes nothing else.
+ * @param {string} project
+ * @param {string[]} paths
+ * @param {'pin'|'unpin'} mode
+ * @returns {{ done: string[], notes: string[] }}
+ */
+export function setPins(project, paths, mode) {
+  const plan = planAdapters(project);
+  const byPath = new Map(plan.files.map((item) => [item.path, item]));
+  const wanted = paths.map((value) => normalizePath(project, value));
+  const unknown = wanted.filter((rel) => !byPath.has(rel));
+  if (unknown.length) {
+    throw new Error(`${unknown.join(', ')}: not a generated adapter file. Nothing was changed.`);
+  }
+  const manifest = { version: MANIFEST_VERSION, files: { ...plan.manifest.files } };
+  const done = [];
+  const notes = [];
+  for (const rel of wanted) {
+    const item = byPath.get(rel);
+    const entry = manifest.files[item.key];
+    if (mode === 'pin') {
+      if (entry && entry.pinned) {
+        notes.push(`${rel} is already pinned.`);
+        continue;
+      }
+      manifest.files[item.key] = { digest: item.rendering, pinned: true };
+      done.push(rel);
+    } else if (entry && entry.pinned) {
+      manifest.files[item.key] = { digest: entry.digest };
+      done.push(rel);
+    } else {
+      notes.push(`${rel} is not pinned.`);
+    }
+  }
+  writeManifest(project, manifest);
+  return { done, notes };
+}

@@ -22,6 +22,8 @@ const READ_ONLY = new Set([
 const MUTATING = new Set([
   'init',
   'upgrade',
+  'adapters pin',
+  'adapters unpin',
   'sync-tasks',
   'next',
   'run',
@@ -91,6 +93,12 @@ export function cliCommandKey(cmd, rest = [], flags = {}) {
     if (sub === 'comment') return 'pr comment';
     if (sub === 'capture') return 'pr capture';
     return sub ? `pr ${sub}` : 'pr';
+  }
+  if (head === 'adapters') {
+    const sub = String(rest[0] || '').trim();
+    if (sub === 'pin') return 'adapters pin';
+    if (sub === 'unpin') return 'adapters unpin';
+    return sub ? `adapters ${sub}` : 'adapters';
   }
   if (head === 'ci') {
     const sub = String(rest[0] || '').trim();

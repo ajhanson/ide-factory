@@ -447,3 +447,146 @@ test('init accepts --replace and --force like upgrade', async () => {
     cleanup(dir);
   }
 });
+
+function readManifestFile(dir) {
+  return JSON.parse(read(dir, '.factory/adapters.json'));
+}
+
+test('adapters pin records the pin and the current upstream digest and writes nothing else', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const before = hashTree(dir).filter((line) => !/^\.factory\/(adapters\.json|ledger\.jsonl)/.test(line));
+    const result = await idefactory(dir, ['adapters', 'pin', REVIEW]);
+    assert.equal(result.code, 0, result.err + result.out);
+    assert.match(result.out, new RegExp(`Pinned ${REVIEW.replace(/\./g, '\\.')}`));
+    const entry = readManifestFile(dir).files[REVIEW];
+    assert.equal(entry.pinned, true);
+    assert.equal(entry.digest, digest(read(dir, REVIEW)));
+    assert.deepEqual(
+      hashTree(dir).filter((line) => !/^\.factory\/(adapters\.json|ledger\.jsonl)/.test(line)),
+      before,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('upgrade skips a pinned file, reports upstream changes since the pin, and exits 0', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    assert.equal((await idefactory(dir, ['adapters', 'pin', REVIEW])).code, 0);
+    fs.writeFileSync(path.join(dir, REVIEW), 'Ours alone.\n');
+    const quiet = await idefactory(dir, ['upgrade']);
+    assert.equal(quiet.code, 0, quiet.err + quiet.out);
+    assert.match(quiet.out, /1 pinned/);
+    assert.doesNotMatch(quiet.out, /upstream changed since pin/);
+
+    const manifest = readManifestFile(dir);
+    manifest.files[REVIEW].digest = digest('the rendering when it was pinned\n');
+    fs.writeFileSync(manifestPath(dir), `${JSON.stringify(manifest, null, 2)}\n`);
+    const loud = await idefactory(dir, ['upgrade']);
+    assert.equal(loud.code, 0);
+    assert.match(loud.out, new RegExp(`pinned\\s+${REVIEW.replace(/\./g, '\\.')} \\(upstream changed since pin\\)`));
+    assert.equal(read(dir, REVIEW), 'Ours alone.\n');
+    assert.equal(fs.existsSync(path.join(dir, '.factory/upgrade')), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a pinned file that is deleted is not recreated', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    assert.equal((await idefactory(dir, ['adapters', 'pin', REVIEW])).code, 0);
+    fs.rmSync(path.join(dir, REVIEW));
+    assert.equal((await idefactory(dir, ['upgrade'])).code, 0);
+    assert.equal(fs.existsSync(path.join(dir, REVIEW)), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('adapters unpin makes the file classify like any other', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    assert.equal((await idefactory(dir, ['adapters', 'pin', REVIEW])).code, 0);
+    fs.writeFileSync(path.join(dir, REVIEW), 'Ours alone.\n');
+    const unpinned = await idefactory(dir, ['adapters', 'unpin', REVIEW]);
+    assert.equal(unpinned.code, 0, unpinned.err + unpinned.out);
+    assert.match(unpinned.out, new RegExp(`Unpinned ${REVIEW.replace(/\./g, '\\.')}`));
+    assert.equal(readManifestFile(dir).files[REVIEW].pinned, undefined);
+    const modified = await idefactory(dir, ['upgrade']);
+    assert.equal(modified.code, 0);
+    assert.match(modified.out, /1 modified/);
+
+    const manifest = readManifestFile(dir);
+    manifest.files[REVIEW].digest = digest('an older rendering\n');
+    fs.writeFileSync(manifestPath(dir), `${JSON.stringify(manifest, null, 2)}\n`);
+    const conflict = await idefactory(dir, ['upgrade']);
+    assert.equal(conflict.code, 3);
+    assert.match(conflict.out, /1 preserved/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('adapters pin fails for a path that is not generated and leaves the manifest alone', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const before = read(dir, '.factory/adapters.json');
+    const result = await idefactory(dir, ['adapters', 'pin', 'src/app.js']);
+    assert.equal(result.code, 1);
+    assert.match(result.err, /not a generated adapter file/);
+    assert.equal(read(dir, '.factory/adapters.json'), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('adapters pin with no manifest creates one that holds only the pin', async () => {
+  const dir = tempProject();
+  try {
+    const result = await idefactory(dir, ['adapters', 'pin', REVIEW, 'AGENTS.md']);
+    assert.equal(result.code, 0, result.err + result.out);
+    const manifest = readManifestFile(dir);
+    assert.deepEqual(Object.keys(manifest.files).sort(), [REVIEW, 'AGENTS.md#section'].sort());
+    assert.ok(Object.values(manifest.files).every((entry) => entry.pinned === true));
+    assert.equal(fs.existsSync(path.join(dir, REVIEW)), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('adapters pin and unpin need a subcommand and a path, and unpin notes a file that was not pinned', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    assert.equal((await idefactory(dir, ['adapters'])).code, 1);
+    const none = await idefactory(dir, ['adapters', 'pin']);
+    assert.equal(none.code, 1);
+    assert.match(none.err, /Usage: idefactory adapters pin <path>/);
+    const note = await idefactory(dir, ['adapters', 'unpin', REVIEW]);
+    assert.equal(note.code, 0);
+    assert.match(note.out, /not pinned/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('adapters pin and unpin take the writer lease', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    acquireWriterLease(dir, 'run');
+    const result = await idefactory(dir, ['adapters', 'pin', REVIEW]);
+    assert.notEqual(result.code, 0);
+    assert.match(result.err, /lease/i);
+  } finally {
+    cleanup(dir);
+  }
+});
