@@ -3,7 +3,6 @@ import path from 'node:path';
 import {
   ROLES,
   ledger,
-  mergeMarked,
   readText,
   templatesRoot,
   writeIfMissing,
@@ -13,7 +12,7 @@ import {
   CONSUMER_WORKFLOW_RELATIVE,
   writeConsumerWorkflowIfAbsent,
 } from './ci-scaffold.mjs';
-import { renderAdapters } from './adapters.mjs';
+import { syncAdapters } from './adapter-sync.mjs';
 import { runOpenspec } from './openspec-cli.mjs';
 
 const STATE_FILES = [
@@ -33,8 +32,7 @@ const STATE_FILES = [
 export function initProject(project, options = {}) {
   fs.mkdirSync(project, { recursive: true });
   const created = writeState(project, options);
-  writeAdapters(project);
-  mergeInstructions(project);
+  const sync = syncAdapters(project, { command: 'init' });
   ensureWorkScaffold(project);
   if (options.withOpenspec) ensureOpenspec(project, options.env || process.env);
   if (options.withBacklog) {
@@ -44,17 +42,17 @@ export function initProject(project, options = {}) {
   if (writeConsumerWorkflowIfAbsent(project).created) {
     created.push(CONSUMER_WORKFLOW_RELATIVE);
   }
-  ledger(project, 'init', { created });
-  return created;
+  ledger(project, 'init', { created, adapters: sync.report.summary });
+  return { created, sync };
 }
 
 export function upgradeProject(project) {
   if (!fs.existsSync(path.join(project, '.factory', 'team.md'))) {
     throw new Error('No .factory/ team state. Run idefactory init first.');
   }
-  writeAdapters(project);
-  mergeInstructions(project);
-  ledger(project, 'upgrade', {});
+  const sync = syncAdapters(project, { command: 'upgrade' });
+  ledger(project, 'upgrade', { adapters: sync.report.summary });
+  return { sync };
 }
 
 function writeState(project, options) {
@@ -95,29 +93,6 @@ function ensureWorkScaffold(project) {
   writeIfMissing(path.join(work, 'index.json'), JSON.stringify({ version: 1, items: [] }, null, 2));
   writeIfMissing(path.join(work, 'items', '.gitkeep'), '');
   writeIfMissing(path.join(project, '.factory', 'attempts', '.gitkeep'), '');
-}
-
-function writeAdapters(project) {
-  for (const item of renderAdapters(project)) {
-    if (item.scope !== 'file') continue;
-    const file = path.join(project, item.path);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, item.content);
-  }
-}
-
-function mergeInstructions(project) {
-  const section = readText(path.join(templatesRoot, 'fragments/instructions.md'));
-  const targets = [
-    'AGENTS.md',
-    'CLAUDE.md',
-    path.join('.github', 'copilot-instructions.md'),
-  ];
-  for (const rel of targets) {
-    const file = path.join(project, rel);
-    const existing = fs.existsSync(file) ? readText(file) : '';
-    writeText(file, mergeMarked(existing, section));
-  }
 }
 
 function ensureOpenspec(project, env) {

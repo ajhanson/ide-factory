@@ -5,6 +5,7 @@ import { completeWorkItem } from './complete.mjs';
 import { approve, createLockout, doctor, reject, resolveLockout, status } from './govern.mjs';
 import { buildStatusDocument } from './read-model.mjs';
 import { previewChecks } from './checks-preview.mjs';
+import { formatReport } from './adapter-sync.mjs';
 import { initProject, upgradeProject } from './install.mjs';
 import { halted, projectDir } from './layout.mjs';
 import { EXIT_NEEDS_AGENT, runFactory } from './orchestrate.mjs';
@@ -107,7 +108,7 @@ async function dispatchCommand(cmd, ctx) {
   const { project, parsed, env, out, err, isTTY, cwd } = ctx;
   switch (cmd) {
     case 'init': {
-      const created = initProject(project, {
+      const { created, sync } = initProject(project, {
         forceRoster: Boolean(parsed.flags['force-roster']),
         withOpenspec: Boolean(parsed.flags['with-openspec']),
         withBacklog: Boolean(parsed.flags['with-backlog']),
@@ -116,14 +117,17 @@ async function dispatchCommand(cmd, ctx) {
       out(`Initialized ${project}`);
       if (created.length) out(`Created: ${created.join(', ')}`);
       else out('Team state already present. Adapters refreshed.');
+      for (const line of formatReport(sync.report)) out(line);
       reportSetupGaps(project, out);
-      return 0;
+      return sync.report.exitCode;
     }
-    case 'upgrade':
-      upgradeProject(project);
+    case 'upgrade': {
+      const { sync } = upgradeProject(project);
       out(`Upgraded adapters in ${project}`);
+      for (const line of formatReport(sync.report)) out(line);
       reportSetupGaps(project, out);
-      return 0;
+      return sync.report.exitCode;
+    }
     case 'setup':
       return handleSetup(project, parsed, out, isTTY);
     case 'doctor':
