@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  MARKER,
   ROLES,
   ledger,
   mergeMarked,
@@ -14,6 +13,7 @@ import {
   CONSUMER_WORKFLOW_RELATIVE,
   writeConsumerWorkflowIfAbsent,
 } from './ci-scaffold.mjs';
+import { renderAdapters } from './adapters.mjs';
 import { runOpenspec } from './openspec-cli.mjs';
 
 const STATE_FILES = [
@@ -28,37 +28,6 @@ const STATE_FILES = [
   'README.md',
   'identity/now.md',
   'identity/wisdom.md',
-];
-
-const COMMANDS = [
-  {
-    name: 'factory-status',
-    description: 'Show factory team, OpenSpec, and work queue status',
-  },
-  {
-    name: 'factory-plan',
-    description: 'Staff a human-authored OpenSpec change into .factory/work',
-  },
-  {
-    name: 'factory-build',
-    description: 'Implement the next factory work item with the factory-build skill',
-  },
-  {
-    name: 'factory-run',
-    description: 'Bounded multi-task factory orchestration until a stop condition',
-  },
-  {
-    name: 'factory-full',
-    description: 'One-stop factory: explore, propose if needed, plan, and run',
-  },
-  {
-    name: 'factory-review',
-    description: 'Review the current factory task as a different role',
-  },
-  {
-    name: 'factory-setup',
-    description: 'Confirm the test command and governance mode, then record them',
-  },
 ];
 
 export function initProject(project, options = {}) {
@@ -129,53 +98,12 @@ function ensureWorkScaffold(project) {
 }
 
 function writeAdapters(project) {
-  const skills = path.join(templatesRoot, 'skills');
-  const destinations = [
-    '.cursor/skills',
-    '.claude/skills',
-    '.github/skills',
-    '.agents/skills',
-    '.cline/skills',
-  ];
-  for (const name of fs.readdirSync(skills)) {
-    const from = path.join(skills, name);
-    if (!fs.statSync(from).isDirectory()) continue;
-    for (const dest of destinations) {
-      fs.cpSync(from, path.join(project, dest, name), { recursive: true });
-    }
+  for (const item of renderAdapters(project)) {
+    if (item.scope !== 'file') continue;
+    const file = path.join(project, item.path);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, item.content);
   }
-  for (const command of COMMANDS) {
-    const body = readText(path.join(templatesRoot, 'commands', `${command.name}.md`)).trim();
-    const owned = `${body}\n\n${MARKER}\n`;
-    writeText(
-      path.join(project, '.cursor/commands', `${command.name}.md`),
-      `---\ndescription: ${command.description}\n---\n\n${owned}`,
-    );
-    writeText(
-      path.join(project, '.claude/commands', `${command.name}.md`),
-      `---\ndescription: ${command.description}\n---\n\n${owned}`,
-    );
-    writeText(
-      path.join(project, '.github/prompts', `${command.name}.prompt.md`),
-      `---\ndescription: ${command.description}\nagent: factory\n---\n\n${owned}`,
-    );
-    writeText(
-      path.join(project, '.cline/workflows', `${command.name}.md`),
-      owned,
-    );
-  }
-  writeText(
-    path.join(project, '.cursor/rules/factory.mdc'),
-    readText(path.join(templatesRoot, 'cursor/rules/factory.mdc')),
-  );
-  writeText(
-    path.join(project, '.github/agents/factory.agent.md'),
-    readText(path.join(templatesRoot, 'copilot/factory.agent.md')),
-  );
-  writeText(
-    path.join(project, '.cline/rules/factory.md'),
-    readText(path.join(templatesRoot, 'cline/rules/factory.md')),
-  );
 }
 
 function mergeInstructions(project) {

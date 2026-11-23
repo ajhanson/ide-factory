@@ -2,8 +2,8 @@
 
 ## 1. Rendering and digests
 
-- [ ] 1.1 Add failing tests in new `test/adapters-render.test.mjs`: `renderAdapters` returns an entry for every skill, command, rule, and agent path with a `kind`, a `name`, and POSIX relative paths; its content for each path equals the file this repository checks in; it lists a skill directory's files individually; and `digest` gives the same value for LF, CRLF, and a missing trailing newline, and different values for different text. Verify they fail with `node --test test/adapters-render.test.mjs`.
-- [ ] 1.2 Create `src/lib/adapters.mjs` with `renderAdapters` and `digest`, moving the template reading and command wrapping out of `writeAdapters` without changing a byte of output. Make `writeAdapters` write from `renderAdapters`. Verify with `node --test test/adapters-render.test.mjs test/install.test.mjs`, and check `node src/cli.mjs upgrade` leaves `git status` clean.
+- [x] 1.1 Add failing tests in new `test/adapters-render.test.mjs`: `renderAdapters` returns an entry for every skill, command, rule, and agent path with a `kind`, a `name`, and POSIX relative paths; its content for each path equals the file this repository checks in; it lists a skill directory's files individually; and `digest` gives the same value for LF, CRLF, and a missing trailing newline, and different values for different text. Verify they fail with `node --test test/adapters-render.test.mjs`.
+- [x] 1.2 Create `src/lib/adapters.mjs` with `renderAdapters` and `digest`, moving the template reading and command wrapping out of `writeAdapters` without changing a byte of output. Make `writeAdapters` write from `renderAdapters`. Verify with `node --test test/adapters-render.test.mjs test/install.test.mjs`, and check `node src/cli.mjs upgrade` leaves `git status` clean.
 
 ## 2. History table
 
