@@ -2,8 +2,8 @@
 
 ## 1. Evidence reader
 
-- [ ] 1.1 Add failing tests in new `test/evidence-file.test.mjs` for `readTransitionEvidence`: inline JSON returns the object, a file holding a JSON object returns the same object, content with spaces, escaped quotes, and non-ASCII text round-trips unchanged, a UTF-8 BOM file and a UTF-16LE BOM file parse, and the file is left unmodified. Implement `readTransitionEvidence` in new `src/lib/evidence-input.mjs`. Verify with `node --test test/evidence-file.test.mjs`.
-- [ ] 1.2 Add failing tests for the failures: both sources given names both flags and says to include only one, either flag with no value fails with the transition usage, a missing path, a directory, an empty file, malformed JSON in the file, and JSON that is an array, string, number, boolean, or null each fail naming the file path, JSON text passed as the `--evidence-file` value fails as a missing file and points to `--evidence`, and malformed inline JSON names `--evidence-file`. Implement the checks and messages from design.md. Verify with `node --test test/evidence-file.test.mjs`.
+- [x] 1.1 Add failing tests in new `test/evidence-file.test.mjs` for `readTransitionEvidence`: inline JSON returns the object, a file holding a JSON object returns the same object, content with spaces, escaped quotes, and non-ASCII text round-trips unchanged, a UTF-8 BOM file and a UTF-16LE BOM file parse, and the file is left unmodified. Implement `readTransitionEvidence` in new `src/lib/evidence-input.mjs`. Verify with `node --test test/evidence-file.test.mjs`.
+- [x] 1.2 Add failing tests for the failures: both sources given names both flags and says to include only one, either flag with no value fails with the transition usage, a missing path, a directory, an empty file, malformed JSON in the file, and JSON that is an array, string, number, boolean, or null each fail naming the file path, JSON text passed as the `--evidence-file` value fails as a missing file and points to `--evidence`, and malformed inline JSON names `--evidence-file`. Implement the checks and messages from design.md. Verify with `node --test test/evidence-file.test.mjs`.
 
 ## 2. CLI wiring
 
