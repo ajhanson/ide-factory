@@ -7,11 +7,11 @@
 
 ## 2. Charters
 
-- [ ] 2.1 Add a failing test in `test/review-guidance.test.mjs` that a fresh `init` writes an engineer charter that requires a failing test only for a `code` item whose checks include a test kind and a reviewer charter that accepts a valid recorded red exception, and that a second `init` leaves an edited charter byte-identical. Update the two charter templates. Verify with `node --test test/review-guidance.test.mjs test/install.test.mjs`.
+- [x] 2.1 Add a failing test in `test/review-guidance.test.mjs` that a fresh `init` writes an engineer charter that requires a failing test only for a `code` item whose checks include a test kind and a reviewer charter that accepts a valid recorded red exception, and that a second `init` leaves an edited charter byte-identical. Update the two charter templates. Verify with `node --test test/review-guidance.test.mjs test/install.test.mjs`.
 
 ## 3. Work packet
 
-- [ ] 3.1 Add failing tests in `test/queue.test.mjs` that the packet states `Task class` and `Red required for` for a `code` item with checks `unit` and `build` (red required for `unit`), a `lightweight` item with `unit` (none), and a `code` item with only `build` (none), and that the implementer-only method line is conditional. Implement the lines in `src/lib/queue.mjs` from `taskType` and `requiredTestKinds`. Verify with `node --test test/queue.test.mjs`.
+- [x] 3.1 Add failing tests in `test/queue.test.mjs` that the packet states `Task class` and `Red required for` for a `code` item with checks `unit` and `build` (red required for `unit`), a `lightweight` item with `unit` (none), and a `code` item with only `build` (none), and that the implementer-only method line is conditional. Implement the lines in `src/lib/queue.mjs` from `taskType` and `requiredTestKinds`. Verify with `node --test test/queue.test.mjs`.
 
 ## 4. Run request
 

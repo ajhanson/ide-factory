@@ -100,3 +100,34 @@ test('upgrade replaces the old unconditional review command with the conditional
     cleanup(dir);
   }
 });
+
+test('a fresh init writes charters that state the conditional red rule', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const engineer = read(dir, '.factory/agents/engineer/charter.md');
+    assert.match(engineer, /`code` item whose checks include a test kind/);
+    assert.match(engineer, /`lightweight`/);
+    assert.match(engineer, /red exception/i);
+    assert.doesNotMatch(engineer, /when the verification profile includes unit or equivalent checks/);
+    const reviewer = read(dir, '.factory/agents/reviewer/charter.md');
+    assert.match(reviewer, /valid recorded red exception/i);
+    assert.match(reviewer, /`code` item whose checks include a test kind/);
+    assert.doesNotMatch(reviewer, /failing-test-first evidence when required/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a second init leaves an edited charter byte-identical', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const file = path.join(dir, '.factory/agents/reviewer/charter.md');
+    fs.writeFileSync(file, '# Reviewer\n\nProject-specific charter.\n');
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    assert.equal(fs.readFileSync(file, 'utf8'), '# Reviewer\n\nProject-specific charter.\n');
+  } finally {
+    cleanup(dir);
+  }
+});
