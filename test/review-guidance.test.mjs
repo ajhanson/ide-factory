@@ -5,6 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { renderWorkPacket } from '../src/lib/queue.mjs';
 import { getWorkItem } from '../src/lib/work.mjs';
+import { digest, manifestPath, readManifest } from '../src/lib/adapters.mjs';
+import { legacyRelease } from './adapter-helpers.mjs';
 import { cleanup, idefactory, repoRoot, tempProject } from './helpers.mjs';
 
 const REVIEW_COMMAND_PATHS = [
@@ -92,13 +94,38 @@ test('upgrade replaces the old unconditional review command with the conditional
   const dir = tempProject();
   try {
     assert.equal((await idefactory(dir, ['init'])).code, 0);
-    const file = path.join(dir, '.cursor/commands/factory-review.md');
-    fs.writeFileSync(
-      file,
-      '---\ndescription: old\n---\n\nAccept only if a failing test was written first and a verification command passed.\n\n<!-- idefactory:owned -->\n',
-    );
+    const rel = '.cursor/commands/factory-review.md';
+    const file = path.join(dir, rel);
+    const old = legacyRelease().get(rel);
+    assert.match(old, /Accept only if a failing test was written first and a verification command passed\./);
+    fs.writeFileSync(file, old);
     assert.equal((await idefactory(dir, ['upgrade'])).code, 0);
     assertConditionalGuidance(fs.readFileSync(file, 'utf8'), 'upgraded review command');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('upgrade keeps a project-edited review command and stages the conditional one beside it', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const rel = '.cursor/commands/factory-review.md';
+    const file = path.join(dir, rel);
+    const manifest = readManifest(dir);
+    manifest.files[rel] = { digest: digest(legacyRelease().get(rel)) };
+    fs.writeFileSync(manifestPath(dir), `${JSON.stringify(manifest, null, 2)}\n`);
+    const edited = 'Review as our team does: accept only after a failing test was written first.\n';
+    fs.writeFileSync(file, edited);
+    const result = await idefactory(dir, ['upgrade']);
+    assert.equal(result.code, 3, result.err + result.out);
+    assert.equal(fs.readFileSync(file, 'utf8'), edited);
+    const staged = result.out.match(/incoming: (\S+)/);
+    assert.ok(staged, result.out);
+    assertConditionalGuidance(
+      fs.readFileSync(path.join(dir, staged[1]), 'utf8'),
+      'staged review command',
+    );
   } finally {
     cleanup(dir);
   }

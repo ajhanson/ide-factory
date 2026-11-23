@@ -10,10 +10,20 @@ export const LEASE_HELD = 'LEASE_HELD';
 export const LEASE_RECOVERY = 'LEASE_RECOVERY';
 export const OWNERSHIP_LOST = 'OWNERSHIP_LOST';
 
-const READ_ONLY = new Set(['status', 'doctor', 'help', 'attempt show', 'setup detect']);
+const READ_ONLY = new Set([
+  'status',
+  'doctor',
+  'help',
+  'attempt show',
+  'setup detect',
+  'init dry-run',
+  'upgrade dry-run',
+]);
 const MUTATING = new Set([
   'init',
   'upgrade',
+  'adapters pin',
+  'adapters unpin',
   'sync-tasks',
   'next',
   'run',
@@ -84,12 +94,19 @@ export function cliCommandKey(cmd, rest = [], flags = {}) {
     if (sub === 'capture') return 'pr capture';
     return sub ? `pr ${sub}` : 'pr';
   }
+  if (head === 'adapters') {
+    const sub = String(rest[0] || '').trim();
+    if (sub === 'pin') return 'adapters pin';
+    if (sub === 'unpin') return 'adapters unpin';
+    return sub ? `adapters ${sub}` : 'adapters';
+  }
   if (head === 'ci') {
     const sub = String(rest[0] || '').trim();
     if (sub === 'scaffold') return 'ci scaffold';
     return sub ? `ci ${sub}` : 'ci';
   }
   if (head === 'setup' && flags.detect) return 'setup detect';
+  if ((head === 'init' || head === 'upgrade') && flags['dry-run']) return `${head} dry-run`;
   return head;
 }
 
