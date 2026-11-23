@@ -114,6 +114,25 @@ Mutating commands take a single writer lease at `.factory/orchestration/writer.l
 
 `idefactory verify run <attemptId> --check <kind>` stores the check result from the registry command. Completion does not accept a pass/fail flag supplied on the transition.
 
+### Transition evidence
+
+`idefactory attempt transition <attemptId> <state>` takes its evidence JSON from one of two flags. Give only one.
+
+- `--evidence <json>` takes inline JSON.
+- `--evidence-file <path>` takes the path of a file that holds a JSON object. It never takes inline JSON. A relative path resolves from the current directory. The file is read as UTF-8, and a UTF-8 byte-order mark or a UTF-16LE file with a byte-order mark is also accepted. The CLI does not modify or delete the file.
+
+Windows PowerShell 5.1 strips the quotation marks from JSON passed as a native command argument, which produces `Expected property name or '}' in JSON`. Use the file flag there, and anywhere else you want to avoid shell quoting. Write the file to the operating system temporary directory, not inside the project, because an untracked file in the project makes the worktree dirty and blocks verification and completion. Remove it afterward whether the command succeeds or fails:
+
+```powershell
+$file = Join-Path ([IO.Path]::GetTempPath()) "evidence-$([guid]::NewGuid()).json"
+try {
+  Set-Content -Path $file -Encoding UTF8 -Value '{"reviewerId":"reviewer-1","verdict":"ACCEPT","notes":"looks good"}'
+  idefactory attempt transition <attemptId> accepted --evidence-file $file
+} finally {
+  Remove-Item -Path $file -ErrorAction SilentlyContinue
+}
+```
+
 ### Red exceptions
 
 A `code` item needs a recorded failing CLI red before it can move to `verifying`. When a rejected attempt held a genuine red and its replacement already passes, the replacement stops with `vacuous-red` and no new red can run. A human can authorize an audited exception instead of a fake red:

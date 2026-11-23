@@ -414,3 +414,17 @@ test('installed factory skills describe prior rejections and the quick reviewer'
     assert.match(runSkill, /route still requires the reviewer/i);
   }
 });
+
+test('the engineer packet names the evidence file option for transitions', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    writeDemoTasks(dir, '- [ ] 1.1 Add parser\n');
+    assert.equal((await idefactory(dir, ['sync-tasks', 'demo'])).code, 0);
+    const packet = renderWorkPacket(dir, getWorkItem(dir, 'demo', '1.1'), 'engineer');
+    assert.match(packet, /idefactory attempt transition/);
+    assert.match(packet, /--evidence-file/);
+  } finally {
+    cleanup(dir);
+  }
+});

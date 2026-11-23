@@ -53,6 +53,8 @@ Spawn a reviewer subagent with only the reviewer charter. Acceptance requires re
 
 Transition the attempt to accepted or rejected with distinct implementerId and reviewerId.
 
+Record transition evidence with `--evidence-file <path>`: write the JSON object to a file in the operating system temporary directory, not inside the project, run `idefactory attempt transition <attemptId> <state> --evidence-file <path>`, and remove that file after the command whether it succeeds or fails. An untracked file inside the project makes the worktree dirty and blocks verification and completion. `--evidence-file` takes only a path. `--evidence` takes inline JSON, which Windows PowerShell 5.1 can mangle. Give only one of the two.
+
 ## Finish
 
 ```bash
