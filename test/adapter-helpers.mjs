@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { digest } from '../src/lib/adapters.mjs';
+import { INSTRUCTION_FILES, SKILL_DIRS, digest, renderAdapters } from '../src/lib/adapters.mjs';
 import { repoRoot } from './helpers.mjs';
 
 export function walkTree(root, rel = '') {
@@ -61,4 +61,43 @@ export function spyRenames(fn, { failOn } = {}) {
     fs.renameSync = original;
   }
   return targets;
+}
+
+export const LEGACY_RELEASE = path.join(repoRoot, 'test/fixtures/legacy-release');
+
+/** The file layout of the release before the conditional review guidance, as an old install wrote it. */
+export function legacyRelease() {
+  const files = new Map();
+  const readFrom = (rel) => fs.readFileSync(path.join(LEGACY_RELEASE, rel), 'utf8');
+  for (const skill of fs.readdirSync(path.join(LEGACY_RELEASE, 'skills'))) {
+    for (const rel of walkTree(path.join(LEGACY_RELEASE, 'skills'), skill)) {
+      for (const dest of SKILL_DIRS) files.set(`${dest}/${rel}`, readFrom(`skills/${rel}`));
+    }
+  }
+  for (const file of fs.readdirSync(path.join(LEGACY_RELEASE, 'commands'))) {
+    const name = file.replace(/\.md$/, '');
+    files.set(`.cursor/commands/${file}`, readFrom(`commands/${file}`));
+    files.set(`.claude/commands/${file}`, readFrom(`commands/${file}`));
+    files.set(`.github/prompts/${name}.prompt.md`, readFrom(`prompts/${name}.prompt.md`));
+    files.set(`.cline/workflows/${file}`, readFrom(`workflows/${file}`));
+  }
+  files.set('.cursor/rules/factory.mdc', readFrom('rules/factory.mdc'));
+  files.set('.github/agents/factory.agent.md', readFrom('rules/factory.agent.md'));
+  files.set('.cline/rules/factory.md', readFrom('rules/factory.cline.md'));
+  for (const rel of INSTRUCTION_FILES) files.set(rel, readFrom('AGENTS.md'));
+  return files;
+}
+
+export function installLegacyRelease(dir, { crlf = false } = {}) {
+  for (const [rel, content] of legacyRelease()) {
+    const file = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, crlf ? content.replace(/\n/g, '\r\n') : content);
+  }
+}
+
+export function currentRendering(rel, project = repoRoot) {
+  const item = renderAdapters(project).find((entry) => entry.path === rel);
+  if (!item) throw new Error(`not a generated path: ${rel}`);
+  return item.content;
 }

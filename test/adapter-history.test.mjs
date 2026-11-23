@@ -44,3 +44,18 @@ test('the history table does not list files the factory must not ship', () => {
   assert.equal(table.files['GOLDEN_RULES.md'], undefined);
   assert.ok(!Object.keys(table.files).some((key) => key.startsWith('.factory/')));
 });
+
+test('the legacy release fixture is recognized by the shipped history table', async () => {
+  const { legacyRelease } = await import('./adapter-helpers.mjs');
+  const { loadHistory, digest, renderAdapters } = await import('../src/lib/adapters.mjs');
+  const history = loadHistory();
+  const keys = new Map(renderAdapters(repoRoot).filter((item) => item.scope === 'file').map((item) => [item.path, item]));
+  let differing = 0;
+  for (const [rel, content] of legacyRelease()) {
+    const item = keys.get(rel);
+    if (!item) continue;
+    if (digest(content) !== digest(item.content)) differing += 1;
+    assert.ok(history.files[item.key]?.includes(digest(content)), `${rel} is in the history table`);
+  }
+  assert.ok(differing > 0, 'the fixture differs from the current rendering');
+});
