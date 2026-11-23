@@ -15,6 +15,6 @@
 - **AND** the custom decisions entry remains
 
 #### Scenario: Upgrade preserves an edited Cline skill
-- **WHEN** a factory-owned file under `.cline/skills/` holds project edits and upgrade runs
+- **WHEN** a factory-owned file under `.cline/skills/` holds project edits, its template changed, and upgrade runs
 - **THEN** that file is byte-for-byte unchanged
 - **AND** the upgrade report lists it as preserved

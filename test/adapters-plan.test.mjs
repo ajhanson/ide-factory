@@ -142,6 +142,13 @@ test('classify: an edited file is preserved with or without a baseline', () => {
   assert.equal(status({ local: EDIT, baseline: null, history: [] }), 'preserved');
 });
 
+test('classify: an edited file whose upstream rendering did not change is only modified', () => {
+  assert.equal(status({ local: EDIT, baseline: NEW, rendering: NEW }), 'modified');
+  assert.equal(status({ local: EDIT, baseline: NEW }), 'modified');
+  assert.equal(status({ local: EDIT, baseline: null }), 'preserved');
+  assert.equal(status({ local: EDIT, baseline: OLD }), 'preserved');
+});
+
 test('classify: line endings alone never preserve a file', () => {
   const crlf = digest('old\r\n');
   assert.equal(status({ local: crlf, baseline: OLD }), 'update');

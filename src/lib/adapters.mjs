@@ -231,13 +231,14 @@ export function writeManifest(project, manifest) {
 /**
  * Decide what to do with one generated file.
  * @param {{ local: string|null, rendering: string, baseline?: string|null, history?: string[], pinned?: boolean }} input
- * @returns {{ status: 'pinned'|'create'|'current'|'update'|'preserved', upstreamChanged?: boolean }}
+ * @returns {{ status: 'pinned'|'create'|'current'|'update'|'modified'|'preserved', upstreamChanged?: boolean }}
  */
 export function classify({ local, rendering, baseline = null, history = [], pinned = false }) {
   if (pinned) return { status: 'pinned', upstreamChanged: rendering !== baseline };
   if (local === null || local === undefined) return { status: 'create' };
   if (local === rendering) return { status: 'current' };
   if (local === baseline || history.includes(local)) return { status: 'update' };
+  if (baseline !== null && baseline === rendering) return { status: 'modified' };
   return { status: 'preserved' };
 }
 
@@ -424,7 +425,7 @@ export function planAdapters(project, options = {}) {
   return { files, orphans, drop, manifest };
 }
 
-const COUNT_KEYS = ['current', 'updated', 'created', 'preserved', 'replaced', 'pinned', 'malformed'];
+const COUNT_KEYS = ['current', 'updated', 'created', 'modified', 'preserved', 'replaced', 'pinned', 'malformed'];
 
 export function emptySummary() {
   const summary = { orphan: 0 };
@@ -464,6 +465,8 @@ export function applyPlan(project, plan) {
       summary.current += 1;
     } else if (item.status === 'pinned') {
       summary.pinned += 1;
+    } else if (item.status === 'modified') {
+      summary.modified += 1;
     } else if (item.status === 'malformed') {
       summary.malformed += 1;
     } else {

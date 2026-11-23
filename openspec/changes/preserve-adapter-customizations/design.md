@@ -64,9 +64,10 @@ Let `L` be the local digest, `R` the digest of the new rendering, `B` the manife
 | file absent | `create` | write; record `R` |
 | `L == R` | `current` | no write; record `R` |
 | `L == B` or `L` in `H` | `update` | write; record `R` |
+| `B` exists and `B == R` | `modified` | no write; keep `B`; informational only |
 | otherwise | `preserved` | no write; keep `B`; stage incoming and diff |
 
-A preserved file keeps its old baseline, so the conflict stays visible until the project resolves it. The project resolves it by making the file equal to the new rendering, by `--replace` or `--force`, or by `pin`. `L` in `H` also covers a file written by an older release when the manifest is missing or older than the file.
+A `modified` file is a local edit with nothing new upstream to apply, so it is listed without staging and does not change the exit code. It becomes `preserved` when its template next changes. A preserved file keeps its old baseline, so the conflict stays visible until the project resolves it. The project resolves it by making the file equal to the new rendering, by `--replace` or `--force`, or by `pin`. `L` in `H` also covers a file written by an older release when the manifest is missing or older than the file.
 
 An existing project file at a generated path that is not in `H` is `preserved`. That is the "no known baseline" case from the issue.
 
@@ -90,7 +91,7 @@ The script only appends: a digest already in the committed table is never droppe
 A run that has anything to report prints one line per non-current file, then a summary:
 
 ```
-upgrade: 76 current, 4 updated, 1 created, 1 preserved, 0 pinned, 0 orphan
+upgrade: 76 current, 4 update, 1 create, 0 modified, 1 preserved, 0 pinned, 0 malformed, 0 orphan
 preserved .cursor/commands/factory-review.md
   incoming: .factory/upgrade/20261123T170000Z/incoming/.cursor/commands/factory-review.md
   diff:     .factory/upgrade/20261123T170000Z/diffs/.cursor/commands/factory-review.md.diff
@@ -101,7 +102,7 @@ Resolve with: idefactory adapters pin <path> | idefactory upgrade --replace <pat
 
 ### Exit codes and apply order
 
-A run that completes with at least one preserved file exits 3, a new code that is distinct from 1 (error) and 2 (an orchestration request). Pinned and orphan entries are informational and exit 0. `--dry-run` follows the same rule.
+A run that completes with at least one preserved or malformed file exits 3, a new code that is distinct from 1 (error) and 2 (an orchestration request). Modified, pinned, and orphan entries are informational and exit 0. `--dry-run` follows the same rule.
 
 Apply order:
 

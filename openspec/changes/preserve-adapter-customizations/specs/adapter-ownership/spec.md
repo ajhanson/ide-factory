@@ -36,7 +36,7 @@ For each generated adapter file, upgrade SHALL write the new rendering when the 
 - **THEN** upgrade creates it from the current rendering
 
 ### Requirement: Edited files are preserved
-When a local generated file matches neither its recorded baseline nor the new rendering, init and upgrade SHALL leave it byte-for-byte unchanged. That includes an existing file at a generated path that the installer never wrote.
+When a local generated file matches neither its recorded baseline nor the new rendering, and the new rendering differs from that baseline or no baseline is recorded, init and upgrade SHALL leave it byte-for-byte unchanged and treat it as preserved. That includes an existing file at a generated path that the installer never wrote.
 
 #### Scenario: Edited file with a recorded baseline
 - **WHEN** a generated command was edited after it was written and the template changed upstream
@@ -52,6 +52,20 @@ When a local generated file matches neither its recorded baseline nor the new re
 - **WHEN** a preserved file is edited until it equals the new rendering and upgrade runs again
 - **THEN** it is reported as current
 - **AND** the manifest records its digest
+
+### Requirement: Edits with no upstream change are only noted
+When a local generated file was edited and the new rendering equals its recorded baseline, there is nothing new to apply. Init and upgrade SHALL leave the file unchanged, list it as modified, stage nothing, and not let it change the exit code.
+
+#### Scenario: Edited file, template unchanged
+- **WHEN** a generated file was edited after it was written and its template did not change
+- **THEN** upgrade leaves it byte-for-byte unchanged
+- **AND** the report lists it as modified
+- **AND** no `.factory/upgrade/` run directory is created
+- **AND** the exit code is 0
+
+#### Scenario: Template changes later
+- **WHEN** the template for that edited file changes and upgrade runs
+- **THEN** the file is preserved and its incoming rendering and diff are saved
 
 ### Requirement: Installs without a manifest use past renderings
 When no manifest entry exists for a file, the installer SHALL treat the file as unmodified if its digest matches a past rendering listed in a shipped history table, and as edited otherwise. A history table that lacks the current rendering of any generated path SHALL fail the test suite.
@@ -107,7 +121,7 @@ Init and upgrade SHALL compute the full plan before writing, SHALL write each re
 Init and upgrade SHALL accept `--dry-run`, which prints the plan per file as create, update, current, preserved, pinned, or orphan, and writes nothing, including the manifest, the ledger, and `.factory/upgrade/`. `--json` SHALL print the same plan as one JSON document. The exit code SHALL follow the same rule as a real run.
 
 #### Scenario: Dry run
-- **WHEN** upgrade runs with `--dry-run` and one file was edited
+- **WHEN** upgrade runs with `--dry-run` and one file was edited while its template changed
 - **THEN** the report marks that file preserved
 - **AND** every file, the manifest, and the ledger are byte-for-byte unchanged
 - **AND** the exit code is 3
