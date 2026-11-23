@@ -20,7 +20,7 @@
 
 ## Decisions
 
-**Validate at the command-line boundary, not in every caller.** `transitionAttempt` takes a new option, `supplied`, which `run.mjs` sets to `true` for evidence read from `--evidence` or `--evidence-file`. When `supplied` is true, the function runs the new check before the existing `rejectCallerSuppliedCheckResults` and `validateEvidence` calls. Internal callers omit the option and are unaffected. Alternative considered: validate inside every call. Rejected because the internal keys (`assignedRole`, `error`) would have to be whitelisted as well.
+**Validate at the command-line boundary, not in every caller.** `transitionAttempt` takes a new option, `supplied`, which `run.mjs` sets to `true` for evidence read from `--evidence` or `--evidence-file`. When `supplied` is true, the function runs the new check after `rejectCallerSuppliedCheckResults` and before `validateEvidence`. The existing check-result refusal keeps its message for `red`, `verification`, and similar keys, which are also unknown to the new check. Internal callers omit the option and are unaffected. Alternative considered: validate inside every call. Rejected because the internal keys (`assignedRole`, `error`) would have to be whitelisted as well.
 
 **One shared allowlist, not one per state.** The keys mean the same thing across states, and the state-specific rules (such as the security verdict and `reviewerId` requirements) already live in `validateEvidence`. A per-state list would duplicate those rules without adding protection.
 
