@@ -430,3 +430,71 @@ test('section: a block equal to the new rendering is current even with CRLF', ()
     cleanup(dir);
   }
 });
+
+test('orphan: a recorded path that is no longer rendered is listed and the file is kept', () => {
+  const dir = tempProject();
+  try {
+    const file = path.join(dir, '.cursor/commands/factory-retired.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'retired\n');
+    const manifest = { version: 1, files: { '.cursor/commands/factory-retired.md': { digest: digest('retired\n') } } };
+    const before = hashTree(dir);
+    const plan = planAdapters(dir, { manifest });
+    assert.deepEqual(plan.orphans.map((item) => item.path), ['.cursor/commands/factory-retired.md']);
+    assert.equal(plan.orphans[0].source, 'manifest');
+    assert.deepEqual(plan.drop, []);
+    assert.deepEqual(hashTree(dir), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('orphan: a path only a past release wrote is listed when the file exists', () => {
+  const dir = tempProject();
+  try {
+    const present = path.join(dir, '.claude/skills/factory-gone/SKILL.md');
+    fs.mkdirSync(path.dirname(present), { recursive: true });
+    fs.writeFileSync(present, 'old\n');
+    const history = {
+      version: 1,
+      files: {
+        '.claude/skills/factory-gone/SKILL.md': [digest('old\n')],
+        '.cline/skills/factory-gone/SKILL.md': [digest('old\n')],
+      },
+    };
+    const plan = planAdapters(dir, { history });
+    assert.deepEqual(plan.orphans.map((item) => [item.path, item.source]), [
+      ['.claude/skills/factory-gone/SKILL.md', 'history'],
+    ]);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('orphan: an entry whose file is gone is dropped and not listed', () => {
+  const dir = tempProject();
+  try {
+    const manifest = {
+      version: 1,
+      files: { '.cursor/commands/factory-retired.md': { digest: digest('x\n') } },
+    };
+    const plan = planAdapters(dir, { manifest });
+    assert.deepEqual(plan.orphans, []);
+    assert.deepEqual(plan.drop, ['.cursor/commands/factory-retired.md']);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('orphan: a currently rendered path is never an orphan', () => {
+  const dir = tempProject();
+  try {
+    const rendered = renderAdapters(dir);
+    writeRendering(dir, rendered);
+    const plan = planAdapters(dir, { history: historyOf(rendered) });
+    assert.deepEqual(plan.orphans, []);
+    assert.deepEqual(plan.drop, []);
+  } finally {
+    cleanup(dir);
+  }
+});

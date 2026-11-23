@@ -395,5 +395,18 @@ export function planAdapters(project, options = {}) {
       ? planFile(project, item, manifest, history)
       : planSection(project, item, manifest, history));
   }
-  return { files, orphans: [], manifest };
+  const rendered = new Set(entries.map((item) => item.key));
+  const orphans = [];
+  const drop = [];
+  const seen = new Set();
+  const consider = (key, source) => {
+    if (key.endsWith('#section') || rendered.has(key) || seen.has(key)) return;
+    seen.add(key);
+    const local = readLocal(path.join(project, key));
+    if (local.exists) orphans.push({ key, path: key, source });
+    else if (source === 'manifest') drop.push(key);
+  };
+  for (const key of Object.keys(manifest.files).sort()) consider(key, 'manifest');
+  for (const key of Object.keys(history.files).sort()) consider(key, 'history');
+  return { files, orphans, drop, manifest };
 }
