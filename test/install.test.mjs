@@ -581,3 +581,11 @@ test('factory-setup waits for confirmation and the README documents setup', asyn
     cleanup(dir);
   }
 });
+
+test('the cli profile is unit only in the shipped template and in this repository', () => {
+  const expected = { checks: ['unit'], humanGate: false };
+  const template = JSON.parse(fs.readFileSync(path.join(repoRoot, 'templates/factory/profiles.json'), 'utf8'));
+  const repo = JSON.parse(fs.readFileSync(path.join(repoRoot, '.factory/profiles.json'), 'utf8'));
+  assert.deepEqual(template.cli, expected);
+  assert.deepEqual(repo.cli, expected);
+});
