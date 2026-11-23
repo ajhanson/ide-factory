@@ -228,3 +228,72 @@ export function classify({ local, rendering, baseline = null, history = [], pinn
   if (local === baseline || history.includes(local)) return { status: 'update' };
   return { status: 'preserved' };
 }
+
+export function historyPath() {
+  return path.join(templatesRoot, 'adapter-history.json');
+}
+
+/** @returns {{ version: number, files: Record<string, string[]> }} */
+export function loadHistory() {
+  const file = historyPath();
+  if (!fs.existsSync(file)) return { version: 1, files: {} };
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function readLocal(file) {
+  if (!fs.existsSync(file)) return { exists: false };
+  if (!fs.statSync(file).isFile()) return { exists: true, regular: false };
+  return { exists: true, regular: true, text: fs.readFileSync(file, 'utf8') };
+}
+
+function planFile(project, item, manifest, history) {
+  const local = readLocal(path.join(project, item.path));
+  const recorded = manifest.files[item.key] || {};
+  const rendering = digest(item.content);
+  const baseline = recorded.digest || null;
+  const base = {
+    key: item.key,
+    path: item.path,
+    scope: item.scope,
+    kind: item.kind,
+    name: item.name,
+    content: item.content,
+    rendering,
+    baseline,
+    local: null,
+    localText: null,
+  };
+  if (local.exists && !local.regular) {
+    return { ...base, status: 'preserved', reason: 'not a regular file' };
+  }
+  const localDigest = local.exists ? digest(local.text) : null;
+  const result = classify({
+    local: localDigest,
+    rendering,
+    baseline,
+    history: history.files[item.key] || [],
+    pinned: Boolean(recorded.pinned),
+  });
+  return {
+    ...base,
+    ...result,
+    local: localDigest,
+    localText: local.exists ? local.text : null,
+  };
+}
+
+/**
+ * Classify every generated file without writing anything.
+ * @param {string} project
+ * @param {{ templates?: string, history?: object, manifest?: object }} [options]
+ */
+export function planAdapters(project, options = {}) {
+  const history = options.history || loadHistory();
+  const manifest = options.manifest || readManifest(project);
+  const entries = renderAdapters(project, { templates: options.templates });
+  const files = [];
+  for (const item of entries) {
+    if (item.scope === 'file') files.push(planFile(project, item, manifest, history));
+  }
+  return { files, orphans: [], manifest };
+}
