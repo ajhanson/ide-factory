@@ -28,8 +28,9 @@ the work queue and attempts, and prints orchestration requests. It does not
 launch a model, and it does not invent products.
 
 Usage:
-  idefactory init [path] [--force-roster] [--with-openspec]
-  idefactory upgrade [path]
+  idefactory init [path] [--force-roster] [--with-openspec] [--dry-run] [--json] [--replace <path>] [--force]
+  idefactory upgrade [path] [--dry-run] [--json] [--replace <path>] [--force]
+  idefactory adapters pin <path>... | unpin <path>... [--path dir]
   idefactory doctor [path]
   idefactory status [--json] [path]
   idefactory checks preview [--path dir]

@@ -16,7 +16,7 @@ idefactory setup
 idefactory doctor
 ```
 
-`init` works in a new directory or an existing repo. It creates `.factory/` and the Cursor, Copilot, Claude, and Cline adapters. It does not delete application files, and it does not copy this repository's GitHub workflows. A second run keeps `decisions.md`, agent histories, charters, and the roster. Text already in `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md` stays; the factory inserts a marked section. A `.squad/` directory is left untouched.
+`init` works in a new directory or an existing repo. It creates `.factory/` and the Cursor, Copilot, Claude, and Cline adapters. It does not delete application files, and it does not copy this repository's GitHub workflows. A second run keeps `decisions.md`, agent histories, charters, and the roster, and it never overwrites a generated adapter file you have edited (see [Upgrading adapters](#upgrading-adapters)). Text already in `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md` stays; the factory inserts a marked section. A `.squad/` directory is left untouched.
 
 `idefactory setup` records the test command and the governance mode. The default is lightweight governance: policy version 1 and no principal verifier. In a terminal it asks for the test command and the mode. From a script, pass the answers as flags:
 
@@ -42,11 +42,51 @@ idefactory init --with-openspec
 
 `--with-backlog` is ignored (deprecated). The execution queue is `.factory/work/`.
 
-Refresh adapter files after you pull a newer factory, without rewriting decisions:
+Refresh adapter files after you pull a newer factory, without rewriting decisions or your edits:
 
 ```bash
 idefactory upgrade
 ```
+
+## Upgrading adapters
+
+`init` and `upgrade` share one planner. Each generated file is a skill, a command, a rule, an agent file, or a marked section of `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md`. For each one the planner compares three things: the file on disk, the rendering this release would write, and the baseline, which is what the factory last wrote. The baseline comes from `.factory/adapters.json`, a committed manifest of content digests (line endings and a trailing newline do not matter). An install that predates the manifest has none, so the planner falls back to a table of every rendering shipped in past releases, `templates/adapter-history.json`.
+
+| Status | Meaning | Action |
+| --- | --- | --- |
+| `current` | The file already matches this release | None |
+| `create` | The file is missing | Written |
+| `update` | The file is an unmodified copy of an older release | Replaced |
+| `modified` | You edited the file and this release has nothing new for it | Kept, nothing staged |
+| `preserved` | You edited the file and this release also changed it | Kept, incoming copy and diff staged |
+| `pinned` | You pinned the file with `idefactory adapters pin` | Never touched |
+| `malformed` | A marked section in an instruction file has an unpaired, reversed, or repeated marker | Kept, reported |
+| `orphan` | A past release generated the file and this one does not | Reported, never deleted |
+
+The safe files are written together. A file in conflict is never overwritten. The command prints one line per file and exits with code 3 when any file is `preserved` or `malformed`. Every other outcome exits 0, so a pipeline can tell "finished with conflicts to review" from a failure. For a `preserved` file the incoming copy and a unified diff are staged under `.factory/upgrade/<timestamp>/` (`incoming/` and `diffs/`; `backups/` holds files that `--replace` or `--force` overwrote). A run with nothing to stage creates no directory, and a repeated run with no change writes nothing.
+
+```bash
+idefactory upgrade --dry-run                 # print the plan, write nothing (also on init)
+idefactory upgrade --json                    # the same report as one JSON document
+idefactory upgrade --replace <path>          # replace this file with the new rendering; the old one is saved under backups/
+idefactory upgrade --force                   # replace every preserved file, with backups; a modified file needs --replace
+idefactory adapters pin <path>...            # keep this file exactly as it is on every later upgrade
+idefactory adapters unpin <path>...
+```
+
+`--replace` is repeatable and takes a path. `--force` takes no value; use `--path <dir>` to name the project.
+
+To migrate an install made by an earlier release, run `idefactory upgrade --dry-run`, then `idefactory upgrade`. Unmodified files update. For each preserved file, read the staged diff and either edit the file to match, run `upgrade --replace <path>`, or pin it. Text you already lost to an old overwrite can only be recovered from git.
+
+### Project extensions
+
+To change factory behavior without editing a generated file, put your text in `.factory/extensions/`. `upgrade` inlines it into every generated copy, after the factory text and before the ownership marker, in a section headed `## Project extensions` that names its source file and says that your text wins where it conflicts:
+
+- `.factory/extensions/skills/<skill>.md` goes into all five copies of that skill.
+- `.factory/extensions/commands/<command>.md` goes into all four copies of that command.
+- `.factory/extensions/rules/factory.md` goes into the Cursor rule, the Copilot agent, and the Cline rule.
+
+Edit or remove an extension and the next `upgrade` rewrites every unmodified copy. A copy you also edited by hand is preserved like any other edit. `init` and `upgrade` never create or write extension files.
 
 ## How a change gets built
 
@@ -177,7 +217,8 @@ flowchart TD
 | --- | --- |
 | `idefactory init` | Install `.factory/` and IDE adapters |
 | `idefactory setup` | Record the test command and lightweight or strict governance |
-| `idefactory upgrade` | Refresh factory-owned skills, commands, rules, and workflows |
+| `idefactory upgrade` | Refresh unmodified generated adapters, keep your edits, and report conflicts (exit 3). Takes `--dry-run`, `--json`, `--replace <path>`, `--force` |
+| `idefactory adapters pin <path>` | Keep a generated file as it is on every upgrade. `unpin` reverses it |
 | `idefactory doctor` | Fail if required team state or adapter files are missing |
 | `idefactory status` | Show halt, the active change, the roster, and work queue counts |
 | `idefactory sync-tasks <change>` | Create work items from unchecked OpenSpec boxes |
