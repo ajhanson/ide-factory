@@ -450,6 +450,14 @@ function stageForState(state, item, { project, attempt } = {}) {
           message: 'Lightweight item. Implement and run verification. A failing test is not required.',
         };
       }
+      if (requiredTestKinds(item.factory?.checks).length === 0) {
+        return {
+          needsAgent: true,
+          role: implementer,
+          nextState: 'verifying',
+          message: 'No check of this item needs a failing test. Implement, run the verification profile checks, and move to verifying. A failing test is not required.',
+        };
+      }
       if (project && attempt && redRequirementMet(project, attempt, item)) {
         return {
           needsAgent: true,

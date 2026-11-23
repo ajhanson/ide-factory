@@ -971,3 +971,68 @@ test('quick route implements as engineer and verifies as reviewer unless securit
     cleanup(sensitive);
   }
 });
+
+async function implementingAttempt(dir, checks) {
+  assert.equal((await idefactory(dir, ['init'])).code, 0);
+  fs.mkdirSync(path.join(dir, 'openspec/changes/demo'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'openspec/changes/demo/tasks.md'),
+    [
+      '- [ ] 1.1 Add parser',
+      '  factory:',
+      '    kind: general',
+      `    checks: [${checks.join(', ')}]`,
+      '',
+    ].join('\n'),
+  );
+  assert.equal((await idefactory(dir, ['sync-tasks', 'demo'])).code, 0);
+  const started = await idefactory(dir, ['attempt', 'start', 'demo', '1.1']);
+  assert.equal(started.code, 0, started.err);
+  const attemptId = JSON.parse(started.out).id;
+  const moved = await idefactory(dir, [
+    'attempt', 'transition', attemptId, 'implementing',
+    '--evidence', JSON.stringify({ implementerId: 'engineer-1' }),
+  ]);
+  assert.equal(moved.code, 0, moved.err);
+  return attemptId;
+}
+
+function requestJson(out) {
+  const match = out.match(/```json\n([\s\S]*?)\n```/);
+  assert.ok(match, `orchestration request must include a json block: ${out}`);
+  return JSON.parse(match[1]);
+}
+
+test('implementing request for a code item with no test kind routes to verifying without a red', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal(getWorkItemTaskType(await implementingAttempt(dir, ['build']), dir), 'code');
+    const result = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(result.code, 2, result.err + result.out);
+    const request = requestJson(result.out);
+    assert.equal(request.state, 'implementing');
+    assert.equal(request.nextState, 'verifying');
+    assert.match(result.out, /A failing test is not required/);
+    assert.doesNotMatch(result.out, /Write a failing test/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('implementing request for a code item with a test kind still asks for a red', async () => {
+  const dir = tempProject();
+  try {
+    await implementingAttempt(dir, ['unit', 'build']);
+    const result = await idefactory(dir, ['run', '--change', 'demo', '--max-tasks', '1']);
+    assert.equal(result.code, 2, result.err + result.out);
+    const request = requestJson(result.out);
+    assert.equal(request.nextState, 'red-confirmed');
+    assert.match(result.out, /Write a failing test and report red evidence with idefactory verify run --red/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+function getWorkItemTaskType(_attemptId, dir) {
+  return getWorkItem(dir, 'demo', '1.1').factory.taskType;
+}

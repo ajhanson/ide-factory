@@ -5,6 +5,7 @@ import { attemptsRoot, getAttempt } from './attempt.mjs';
 import { classifyTask, defaultAcceptanceCriteria, parseFactoryBlock } from './classify.mjs';
 import { describeException, listAttemptExceptions } from './red-exceptions.mjs';
 import { halted, ledger, readText, writeText } from './layout.mjs';
+import { requiredTestKinds } from './red-evidence.mjs';
 import {
   ensureWorkDirs,
   getWorkItem,
@@ -382,6 +383,8 @@ Change: ${item.change}
 Roles pipeline: ${roles || role}
 Verification profile: ${item.factory?.verificationProfile || '(default)'}
 Checks: ${(item.factory?.checks || []).join(', ') || '(default)'}
+Task class: ${taskClassOf(item)}
+Red required for: ${redRequiredKinds(item).join(', ') || 'none'}
 
 Description:
 openspec-task: ${item.id}
@@ -395,7 +398,7 @@ ${criteria || '- (see the task)'}
 ${prior}
 Method:
 - Prefer common scaffolds and libraries over hand-rolled toolchains (for example npm create vite@latest for a SPA).
-- Write a failing test before production code when the profile includes unit or equivalent checks.
+- Write a failing test before production code only for the kinds listed under Red required for. A human-authorized red exception satisfies a kind in place of a red.
 - Record evidence on the attempt via idefactory attempt transition. Pass JSON evidence with --evidence-file <path> to a temporary file outside the project, or --evidence <json> inline, never both.
 - Run verification profile checks before claiming done.
 - Review is a different role: reviewer. The implementer does not approve their own work.
@@ -410,6 +413,15 @@ function priorRejectionBlock(project, item, role) {
   const notes = priorRejections(project, item.change, item.id);
   if (notes.length === 0) return '';
   return `\nPrior rejections:\n${notes.join('\n')}\n`;
+}
+
+function taskClassOf(item) {
+  return item.factory?.taskType === 'lightweight' ? 'lightweight' : 'code';
+}
+
+function redRequiredKinds(item) {
+  if (taskClassOf(item) === 'lightweight') return [];
+  return requiredTestKinds(item.factory?.checks);
 }
 
 function redExceptionBlock(project, item, role) {
