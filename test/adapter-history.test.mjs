@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { digest, renderAdapters } from '../src/lib/adapters.mjs';
+import { digest, loadHistory, renderAdapters } from '../src/lib/adapters.mjs';
+import { legacyRelease } from './adapter-helpers.mjs';
 import { repoRoot } from './helpers.mjs';
 
 const table = JSON.parse(
@@ -45,9 +46,7 @@ test('the history table does not list files the factory must not ship', () => {
   assert.ok(!Object.keys(table.files).some((key) => key.startsWith('.factory/')));
 });
 
-test('the legacy release fixture is recognized by the shipped history table', async () => {
-  const { legacyRelease } = await import('./adapter-helpers.mjs');
-  const { loadHistory, digest, renderAdapters } = await import('../src/lib/adapters.mjs');
+test('the legacy release fixture is recognized by the shipped history table', () => {
   const history = loadHistory();
   const keys = new Map(renderAdapters(repoRoot).filter((item) => item.scope === 'file').map((item) => [item.path, item]));
   let differing = 0;

@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { digest, manifestPath, readManifest } from '../src/lib/adapters.mjs';
+import {
+  SKILL_DIRS,
+  digest,
+  manifestPath,
+  readManifest,
+  renderAdapters,
+} from '../src/lib/adapters.mjs';
 import { acquireWriterLease } from '../src/lib/writer-lease.mjs';
 import { cleanup, idefactory, tempProject } from './helpers.mjs';
-import { hashTree } from './adapter-helpers.mjs';
+import { currentRendering, hashTree, installLegacyRelease } from './adapter-helpers.mjs';
 
 const REVIEW = '.cursor/commands/factory-review.md';
 
@@ -590,3 +596,84 @@ test('adapters pin and unpin take the writer lease', async () => {
     cleanup(dir);
   }
 });
+
+const SKILL_EDIT = '.claude/skills/factory-build/SKILL.md';
+const COMMAND_LOCATIONS = [
+  '.cursor/commands/factory-review.md',
+  '.claude/commands/factory-review.md',
+  '.github/prompts/factory-review.prompt.md',
+  '.cline/workflows/factory-review.md',
+];
+
+for (const crlf of [false, true]) {
+  test(`a legacy install upgrades safely end to end (${crlf ? 'CRLF' : 'LF'} files)`, async () => {
+    const dir = tempProject();
+    try {
+      const eol = crlf ? '\r\n' : '\n';
+      assert.equal((await idefactory(dir, ['init'])).code, 0);
+      fs.rmSync(manifestPath(dir));
+      installLegacyRelease(dir, { crlf });
+
+      fs.mkdirSync(path.join(dir, '.cursor/commands'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.cursor/commands/mine.md'), 'our own command\n');
+      fs.writeFileSync(path.join(dir, 'app.js'), 'keep\n');
+      fs.appendFileSync(path.join(dir, '.factory/decisions.md'), '\nCUSTOM-DECISION-KEEP\n');
+      fs.appendFileSync(path.join(dir, '.factory/agents/engineer/history.md'), '\nCUSTOM-HISTORY-KEEP\n');
+      const decisions = read(dir, '.factory/decisions.md');
+      const history = read(dir, '.factory/agents/engineer/history.md');
+      const ledgerBefore = fs.readFileSync(path.join(dir, '.factory/ledger.jsonl'), 'utf8');
+
+      const editedCommand = `Review as our team does.${eol}`;
+      fs.writeFileSync(path.join(dir, REVIEW), editedCommand);
+      fs.appendFileSync(path.join(dir, SKILL_EDIT), `${eol}Team note.${eol}`);
+      const editedSkill = read(dir, SKILL_EDIT);
+
+      const before = hashTree(dir);
+      const dry = await idefactory(dir, ['upgrade', '--dry-run']);
+      assert.equal(dry.code, 3, dry.err + dry.out);
+      assert.match(dry.out, /2 preserved/);
+      assert.deepEqual(hashTree(dir), before, 'a dry run changes nothing');
+
+      const real = await idefactory(dir, ['upgrade']);
+      assert.equal(real.code, 3, real.err + real.out);
+      assert.match(real.out, /2 preserved/);
+      assert.equal(read(dir, REVIEW), editedCommand);
+      assert.equal(read(dir, SKILL_EDIT), editedSkill);
+
+      for (const rel of COMMAND_LOCATIONS.filter((rel) => rel !== REVIEW)) {
+        assert.equal(digest(read(dir, rel)), digest(currentRendering(rel)), rel);
+      }
+      for (const skillDir of SKILL_DIRS.filter((d) => `${d}/factory-build/SKILL.md` !== SKILL_EDIT)) {
+        const rel = `${skillDir}/factory-build/SKILL.md`;
+        assert.equal(digest(read(dir, rel)), digest(currentRendering(rel)), rel);
+      }
+      for (const item of renderAdapters(dir).filter((entry) => entry.scope === 'file')) {
+        if (item.path === REVIEW || item.path === SKILL_EDIT) continue;
+        assert.equal(digest(read(dir, item.path)), digest(item.content), item.path);
+      }
+
+      const replaced = await idefactory(dir, ['upgrade', '--replace', REVIEW]);
+      assert.equal(replaced.code, 3, replaced.err + replaced.out);
+      assert.equal(digest(read(dir, REVIEW)), digest(currentRendering(REVIEW)));
+      const backup = replaced.out.match(/backup:\s+(\S+)/);
+      assert.ok(backup, replaced.out);
+      assert.equal(fs.readFileSync(path.join(dir, backup[1]), 'utf8'), editedCommand);
+      assert.equal(read(dir, SKILL_EDIT), editedSkill);
+
+      const pin = await idefactory(dir, ['adapters', 'pin', SKILL_EDIT]);
+      assert.equal(pin.code, 0, pin.err + pin.out);
+      const pinned = await idefactory(dir, ['upgrade']);
+      assert.equal(pinned.code, 0, pinned.err + pinned.out);
+      assert.match(pinned.out, /1 pinned/);
+      assert.equal(read(dir, SKILL_EDIT), editedSkill);
+
+      assert.equal(read(dir, '.cursor/commands/mine.md'), 'our own command\n');
+      assert.equal(read(dir, 'app.js'), 'keep\n');
+      assert.ok(read(dir, '.factory/decisions.md').startsWith(decisions));
+      assert.ok(read(dir, '.factory/agents/engineer/history.md').startsWith(history));
+      assert.ok(fs.readFileSync(path.join(dir, '.factory/ledger.jsonl'), 'utf8').startsWith(ledgerBefore));
+    } finally {
+      cleanup(dir);
+    }
+  });
+}
