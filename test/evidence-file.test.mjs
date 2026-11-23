@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { getAttempt } from '../src/lib/attempt.mjs';
 import { readTransitionEvidence } from '../src/lib/evidence-input.mjs';
-import { cleanup, idefactory, tempProject } from './helpers.mjs';
+import { cleanup, idefactory, repoRoot, tempProject } from './helpers.mjs';
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'idefactory-evidence-'));
@@ -354,5 +354,20 @@ test('a flag with no value exits with the transition usage', async () => {
     }
   } finally {
     cleanup(dir);
+  }
+});
+
+test('every shipped copy of factory-build and factory-run documents the evidence file', () => {
+  for (const dir of ['templates', '.cursor', '.claude', '.cline', '.github', '.agents']) {
+    for (const name of ['factory-build', 'factory-run']) {
+      const skill = fs.readFileSync(path.join(repoRoot, dir, 'skills', name, 'SKILL.md'), 'utf8');
+      const label = `${dir}/${name}`;
+      assert.match(skill, /--evidence-file/, label);
+      assert.match(skill, /`--evidence` takes inline JSON/, label);
+      assert.match(skill, /only one/i, label);
+      assert.match(skill, /operating system temporary directory/i, label);
+      assert.match(skill, /not inside the project/i, label);
+      assert.match(skill, /remove (that|the) file after the command whether it succeeds or fails/i, label);
+    }
   }
 });
