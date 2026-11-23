@@ -7,8 +7,8 @@
 
 ## 2. History table
 
-- [ ] 2.1 Add `scripts/build-adapter-history.mjs`, which lists the commits that touched `templates/` or `src/lib/install.mjs`, runs each commit's `init` from a `git archive` copy into a temporary directory, digests every adapter file and instruction section, and merges the digests into `templates/adapter-history.json` with sorted keys and without dropping a digest already in the file. Verify by running `node scripts/build-adapter-history.mjs` twice, checking the second run changes nothing, and spot-checking that a pre-`6803c3f` `factory-review` digest is listed.
-- [ ] 2.2 Add failing tests in new `test/adapter-history.test.mjs` that every path and instruction section from `renderAdapters` has its current digest in `templates/adapter-history.json`, that the table has more than one digest for a path that changed over time, and that the keys and digests are sorted. Commit the generated table and verify with `node --test test/adapter-history.test.mjs`.
+- [x] 2.1 Add `scripts/build-adapter-history.mjs`, which lists the commits that touched `templates/` or `src/lib/install.mjs`, runs each commit's `init` from a `git archive` copy into a temporary directory, digests every adapter file and instruction section, and merges the digests into `templates/adapter-history.json` with sorted keys and without dropping a digest already in the file. Verify by running `node scripts/build-adapter-history.mjs` twice, checking the second run changes nothing, and spot-checking that a pre-`6803c3f` `factory-review` digest is listed.
+- [x] 2.2 Add failing tests in new `test/adapter-history.test.mjs` that every path and instruction section from `renderAdapters` has its current digest in `templates/adapter-history.json`, that the table has more than one digest for a path that changed over time, and that the keys and digests are sorted. Commit the generated table and verify with `node --test test/adapter-history.test.mjs`.
 
 ## 3. Manifest and classification
 
