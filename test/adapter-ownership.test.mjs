@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { digest, manifestPath, readManifest } from '../src/lib/adapters.mjs';
+import { acquireWriterLease } from '../src/lib/writer-lease.mjs';
 import { cleanup, idefactory, tempProject } from './helpers.mjs';
 import { hashTree } from './adapter-helpers.mjs';
 
@@ -130,6 +131,123 @@ test('setup gaps are still reported after the adapter report', async () => {
   try {
     const result = await idefactory(dir, ['init']);
     assert.match(result.out, /Run idefactory setup to record the missing answer\./);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('upgrade --dry-run prints the plan, exits like a real run, and writes nothing', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const before = hashTree(dir);
+    const result = await idefactory(dir, ['upgrade', '--dry-run']);
+    assert.equal(result.code, 3, result.err + result.out);
+    assert.match(result.out, /upgrade \(dry run\): .*1 preserved/);
+    assert.match(result.out, new RegExp(`preserved\\s+${REVIEW.replace(/\./g, '\\.')}`));
+    assert.doesNotMatch(result.out, /incoming:/);
+    assert.deepEqual(hashTree(dir), before);
+    assert.equal(fs.existsSync(path.join(dir, '.factory/upgrade')), false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('upgrade --dry-run with nothing to do exits 0', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    const result = await idefactory(dir, ['upgrade', '--dry-run']);
+    assert.equal(result.code, 0, result.err);
+    assert.match(result.out, /0 update, 0 create, 0 modified, 0 preserved/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('init --dry-run in an empty directory writes nothing and lists what it would create', async () => {
+  const dir = tempProject();
+  try {
+    const result = await idefactory(dir, ['init', '--dry-run']);
+    assert.equal(result.code, 0, result.err);
+    assert.deepEqual(fs.readdirSync(dir), []);
+    assert.match(result.out, /Dry run: nothing was written\./);
+    assert.match(result.out, /Would create: .*\.factory\/team\.md|Would create: .*team\.md/);
+    assert.match(result.out, /init \(dry run\): 0 current, 0 update, \d+ create/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('init --dry-run in an existing install changes nothing, including the ledger', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const before = hashTree(dir);
+    const result = await idefactory(dir, ['init', '--dry-run']);
+    assert.equal(result.code, 3);
+    assert.deepEqual(hashTree(dir), before);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('a dry run does not need the writer lease but a real run does', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    acquireWriterLease(dir, 'run');
+    const dry = await idefactory(dir, ['upgrade', '--dry-run']);
+    assert.equal(dry.code, 0, dry.err + dry.out);
+    const real = await idefactory(dir, ['upgrade']);
+    assert.notEqual(real.code, 0);
+    assert.match(real.err, /lease/i);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--json prints one document with a status and a digest for each generated path', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const result = await idefactory(dir, ['upgrade', '--json']);
+    assert.equal(result.code, 3, result.err);
+    const doc = JSON.parse(result.out);
+    assert.equal(doc.version, 1);
+    assert.equal(doc.dryRun, false);
+    assert.equal(doc.summary.preserved, 1);
+    assert.equal(doc.exitCode, 3);
+    assert.ok(doc.files.length > 80);
+    for (const file of doc.files) {
+      assert.equal(typeof file.path, 'string');
+      assert.equal(typeof file.status, 'string');
+      assert.match(file.digest, /^[0-9a-f]{64}$/);
+    }
+    const review = doc.files.find((file) => file.path === REVIEW);
+    assert.equal(review.status, 'preserved');
+    assert.ok(read(dir, review.incoming));
+    assert.ok(read(dir, review.diff));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('--json with --dry-run stages nothing', async () => {
+  const dir = tempProject();
+  try {
+    assert.equal((await idefactory(dir, ['init'])).code, 0);
+    seedConflict(dir);
+    const before = hashTree(dir);
+    const result = await idefactory(dir, ['upgrade', '--dry-run', '--json']);
+    const doc = JSON.parse(result.out);
+    assert.equal(doc.dryRun, true);
+    assert.equal(doc.run, null);
+    assert.equal(doc.files.find((file) => file.path === REVIEW).incoming, undefined);
+    assert.deepEqual(hashTree(dir), before);
   } finally {
     cleanup(dir);
   }

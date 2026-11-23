@@ -10,7 +10,15 @@ export const LEASE_HELD = 'LEASE_HELD';
 export const LEASE_RECOVERY = 'LEASE_RECOVERY';
 export const OWNERSHIP_LOST = 'OWNERSHIP_LOST';
 
-const READ_ONLY = new Set(['status', 'doctor', 'help', 'attempt show', 'setup detect']);
+const READ_ONLY = new Set([
+  'status',
+  'doctor',
+  'help',
+  'attempt show',
+  'setup detect',
+  'init dry-run',
+  'upgrade dry-run',
+]);
 const MUTATING = new Set([
   'init',
   'upgrade',
@@ -90,6 +98,7 @@ export function cliCommandKey(cmd, rest = [], flags = {}) {
     return sub ? `ci ${sub}` : 'ci';
   }
   if (head === 'setup' && flags.detect) return 'setup detect';
+  if ((head === 'init' || head === 'upgrade') && flags['dry-run']) return `${head} dry-run`;
   return head;
 }
 

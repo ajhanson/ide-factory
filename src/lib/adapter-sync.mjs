@@ -14,7 +14,7 @@ function emptyCounts() {
   return counts;
 }
 
-function buildReport(plan, staged, command) {
+function buildReport(plan, staged, command, dryRun) {
   const summary = emptyCounts();
   const files = plan.files.map((item) => {
     summary[item.status] += 1;
@@ -34,6 +34,7 @@ function buildReport(plan, staged, command) {
   return {
     version: 1,
     command,
+    dryRun,
     summary,
     run: staged ? staged.rel : null,
     files,
@@ -45,22 +46,23 @@ function buildReport(plan, staged, command) {
 /**
  * Plan, stage, and apply the generated adapter files and instruction sections.
  * @param {string} project
- * @param {{ command?: string, now?: Date }} [options]
+ * @param {{ command?: string, now?: Date, dryRun?: boolean }} [options]
  */
 export function syncAdapters(project, options = {}) {
   const command = options.command || 'upgrade';
+  const dryRun = Boolean(options.dryRun);
   const plan = planAdapters(project);
+  if (dryRun) return { plan, staged: null, result: null, report: buildReport(plan, null, command, true) };
   const staged = stageConflicts(project, plan, { now: options.now });
   const result = applyPlan(project, plan);
-  const report = buildReport(plan, staged, command);
-  return { plan, staged, result, report };
+  return { plan, staged, result, report: buildReport(plan, staged, command, false) };
 }
 
 /** Human-readable report lines. */
 export function formatReport(report) {
   const { summary } = report;
   const lines = [
-    `${report.command}: ${STATUS_ORDER.map((status) => `${summary[status]} ${status}`).join(', ')}`,
+    `${report.command}${report.dryRun ? ' (dry run)' : ''}: ${STATUS_ORDER.map((status) => `${summary[status]} ${status}`).join(', ')}`,
   ];
   for (const file of report.files) {
     if (file.status === 'current') continue;

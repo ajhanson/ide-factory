@@ -108,24 +108,41 @@ async function dispatchCommand(cmd, ctx) {
   const { project, parsed, env, out, err, isTTY, cwd } = ctx;
   switch (cmd) {
     case 'init': {
+      const dryRun = Boolean(parsed.flags['dry-run']);
       const { created, sync } = initProject(project, {
         forceRoster: Boolean(parsed.flags['force-roster']),
         withOpenspec: Boolean(parsed.flags['with-openspec']),
         withBacklog: Boolean(parsed.flags['with-backlog']),
+        dryRun,
         env,
       });
-      out(`Initialized ${project}`);
-      if (created.length) out(`Created: ${created.join(', ')}`);
-      else out('Team state already present. Adapters refreshed.');
+      if (parsed.flags.json) {
+        out(JSON.stringify(sync.report, null, 2));
+        return sync.report.exitCode;
+      }
+      if (dryRun) {
+        out('Dry run: nothing was written.');
+        if (created.length) out(`Would create: ${created.join(', ')}`);
+      } else {
+        out(`Initialized ${project}`);
+        if (created.length) out(`Created: ${created.join(', ')}`);
+        else out('Team state already present. Adapters refreshed.');
+      }
       for (const line of formatReport(sync.report)) out(line);
-      reportSetupGaps(project, out);
+      if (!dryRun) reportSetupGaps(project, out);
       return sync.report.exitCode;
     }
     case 'upgrade': {
-      const { sync } = upgradeProject(project);
-      out(`Upgraded adapters in ${project}`);
+      const dryRun = Boolean(parsed.flags['dry-run']);
+      const { sync } = upgradeProject(project, { dryRun });
+      if (parsed.flags.json) {
+        out(JSON.stringify(sync.report, null, 2));
+        return sync.report.exitCode;
+      }
+      if (dryRun) out('Dry run: nothing was written.');
+      else out(`Upgraded adapters in ${project}`);
       for (const line of formatReport(sync.report)) out(line);
-      reportSetupGaps(project, out);
+      if (!dryRun) reportSetupGaps(project, out);
       return sync.report.exitCode;
     }
     case 'setup':

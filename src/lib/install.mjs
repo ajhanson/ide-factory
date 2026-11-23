@@ -30,6 +30,10 @@ const STATE_FILES = [
 ];
 
 export function initProject(project, options = {}) {
+  if (options.dryRun) {
+    const sync = syncAdapters(project, { command: 'init', dryRun: true });
+    return { created: plannedState(project), sync };
+  }
   fs.mkdirSync(project, { recursive: true });
   const created = writeState(project, options);
   const sync = syncAdapters(project, { command: 'init' });
@@ -46,13 +50,27 @@ export function initProject(project, options = {}) {
   return { created, sync };
 }
 
-export function upgradeProject(project) {
+export function upgradeProject(project, options = {}) {
   if (!fs.existsSync(path.join(project, '.factory', 'team.md'))) {
     throw new Error('No .factory/ team state. Run idefactory init first.');
   }
-  const sync = syncAdapters(project, { command: 'upgrade' });
+  const sync = syncAdapters(project, { command: 'upgrade', dryRun: Boolean(options.dryRun) });
+  if (options.dryRun) return { sync };
   ledger(project, 'upgrade', { adapters: sync.report.summary });
   return { sync };
+}
+
+function plannedState(project) {
+  const factory = path.join(project, '.factory');
+  const missing = [];
+  const consider = (rel) => {
+    if (!fs.existsSync(path.join(factory, rel))) missing.push(rel);
+  };
+  for (const rel of STATE_FILES) consider(rel);
+  for (const role of ROLES) {
+    for (const leaf of ['charter.md', 'history.md']) consider(path.join('agents', role, leaf));
+  }
+  return missing;
 }
 
 function writeState(project, options) {
